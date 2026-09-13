@@ -852,10 +852,10 @@ createApp({
   </div><div class="modal-f"><button class="btn" @click="close">{{res?'关闭':'取消'}}</button><button class="btn pri" @click="create" v-if="!res" :disabled="saving">{{saving?'创建中':'创建'}}</button></div></div></div>
 </div>`
 }).component('mdls',{props:['token','toast'],setup(p){
-  const m=ref([]),al=ref({}),builtinKeys=ref({}),aliasChannel=ref('workbuddy'),ld=ref(true),sources=ref([]),syncing=ref(false),adding=ref(false),addOpen=ref(false);
+  const al=ref({}),builtinKeys=ref({}),aliasChannel=ref('workbuddy'),ld=ref(true),sources=ref([]),syncing=ref(false),adding=ref(false),addOpen=ref(false);
   const FALLBACK_CH=[{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}];
   const addForm=reactive({channel:'workbuddy',id:'',name:''});
-  const newKey=ref(''),newVal=ref(''),editingModels=ref(false);
+  const newKey=ref(''),newVal=ref('');
   const channels=computed(()=>sources.value.length?sources.value.map(s=>({id:s.channel,display_name:s.display_name||s.channel})):FALLBACK_CH);
   function applyAliasSnapshot(snap){
     const maps={}, keys={};
@@ -863,11 +863,10 @@ createApp({
     al.value=maps;builtinKeys.value=keys;
     if(!maps[aliasChannel.value]&&channels.value.length)aliasChannel.value=channels.value[0].id;
   }
-  async function load(){ld.value=true;try{m.value=await api.get('/admin/models',p.token);try{applyAliasSnapshot(await api.get('/admin/aliases',p.token))}catch(e){al.value={};builtinKeys.value={}}try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){sources.value=[]}}catch(e){p.toast('失败','err')}ld.value=false}
+  async function load(){ld.value=true;try{try{applyAliasSnapshot(await api.get('/admin/aliases',p.token))}catch(e){al.value={};builtinKeys.value={}}try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){sources.value=[]}}catch(e){p.toast('失败','err')}ld.value=false}
   async function refreshCatalogs(){try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){}}
   async function save(){
     try{
-      await api.put('/admin/models',m.value,p.token);
       const body={};
       for(const c of channels.value){
         const skip=new Set(builtinKeys.value[c.id]||[]);
@@ -884,8 +883,6 @@ createApp({
     try{
       const r=await api.post('/admin/models/refresh',{},p.token);
       sources.value=r.sources||[];
-      const wb=sources.value.find(s=>s.channel==='workbuddy');
-      if(wb)m.value=(wb.models||[]).map(x=>({...x}));
       const live=sources.value.filter(s=>s.mode==='live').length;
       const fallback=sources.value.length-live;
       p.toast('模型列表已更新：'+live+' 个通道在线读取'+(fallback?'，'+fallback+' 个通道使用本地列表':''),live?'ok':'warn');
@@ -902,22 +899,13 @@ createApp({
     try{
       const label=(channels.value.find(c=>c.id===channel)||{}).display_name||channel;
       const bare=id.startsWith(channel+'/')?id.slice(channel.length+1):id;
-      if(channel==='workbuddy'){
-        if(m.value.some(x=>x.id===bare)){p.toast('该模型已在 WorkBuddy 列表中','err');adding.value=false;return}
-        const models=m.value.concat([{id:bare,name:name||bare}]);
-        await api.put('/admin/models',models,p.token);
-        m.value=models;
-        p.toast('已添加 '+label);
-      }else{
-        const r=await api.post('/admin/models/catalogs',{channel,id:bare,name},p.token);
-        p.toast((r.updated?'已更新 ':'已添加 ')+label);
-      }
+      const r=await api.post('/admin/models/catalogs',{channel,id:bare,name},p.token);
+      p.toast((r.updated?'已更新 ':'已添加 ')+label);
       addOpen.value=false;
       await refreshCatalogs();
     }catch(e){p.toast(apiErr(e,'添加失败'),'err')}
     adding.value=false
   }
-  function rm(i){m.value.splice(i,1)}
   async function rmExtra(channel,id){
     try{await api.del('/admin/models/catalogs?channel='+encodeURIComponent(channel)+'&model_id='+encodeURIComponent(id),p.token);p.toast('已删除');await refreshCatalogs()}catch(e){p.toast(apiErr(e,'删除失败'),'err')}
   }
@@ -930,33 +918,33 @@ createApp({
     if(isBuiltin(k)){p.toast('不能覆盖内置别名','err');return}
     const cur=al.value[ch]||{};
     if(cur[k]){p.toast('该通道已有此别名','err');return}
-    al.value={...al.value,[ch]:{...cur,[k]:v}};newKey.value='';newVal.value='';p.toast('已添加，请点击“保存全部”')
+    al.value={...al.value,[ch]:{...cur,[k]:v}};newKey.value='';newVal.value='';p.toast('已添加，请点击“保存别名”')
   }
   function rmAlias(k){const ch=aliasChannel.value;const o={...(al.value[ch]||{})};delete o[k];al.value={...al.value,[ch]:o}}
   function modeText(s){return s.mode==='live'?'在线读取':(s.mode==='fallback'?'回退本地':'未读取')}
   function modeClass(s){return s.mode==='live'?'ok':(s.mode==='fallback'?'warn':'')}
-  const modelSources=computed(()=>channels.value.map(c=>({...sources.value.find(s=>s.channel===c.id),channel:c.id,display_name:c.display_name,models:c.id==='workbuddy'?m.value:(sources.value.find(s=>s.channel===c.id)?.models||[])})));
+  const modelSources=computed(()=>channels.value.map(c=>{const s=sources.value.find(x=>x.channel===c.id)||{};return {...s,channel:c.id,display_name:c.display_name,models:s.models||[]}}));
   const aliasRows=computed(()=>al.value[aliasChannel.value]||{});
   const aliasTargets=computed(()=>{const s=modelSources.value.find(x=>x.channel===aliasChannel.value);return s?s.models:[]});
   const aliasChannelName=computed(()=>(channels.value.find(c=>c.id===aliasChannel.value)||{}).display_name||aliasChannel.value);
-  onMounted(load);return{m,al,ld,sources,modelSources,editingModels,syncing,adding,addOpen,addForm,channels,load,save,syncSources,openAdd,closeAdd,submitAdd,rm,rmExtra,newKey,newVal,addAlias,rmAlias,isBuiltin,modeText,modeClass,aliasChannel,aliasRows,aliasTargets,aliasChannelName,I}
+  onMounted(load);return{al,ld,sources,modelSources,syncing,adding,addOpen,addForm,channels,load,save,syncSources,openAdd,closeAdd,submitAdd,rmExtra,newKey,newVal,addAlias,rmAlias,isBuiltin,modeText,modeClass,aliasChannel,aliasRows,aliasTargets,aliasChannelName,I}
 },template:`
 <div>
-  <div class="phead"><h1>模型配置</h1><p>/v1/models 按通道列出；一键读取各来源供应模型，手动添加时先选通道，名称只挂在该通道</p></div>
-  <div class="tbar"><button class="btn s pri" @click="syncSources" :disabled="syncing"><span v-html="I.scan"></span>{{syncing?'读取中':'一键读取供应模型'}}</button><button class="btn s pri" @click="save">保存全部</button><button class="btn s" @click="openAdd"><span v-html="I.plus"></span>添加模型</button><button class="btn s" @click="load" :disabled="ld"><span v-html="I.refresh"></span>刷新</button></div>
+  <div class="phead"><h1>模型配置</h1><p>四通道目录均来自上游或本地回退；自定义模型用“添加模型”，官方条目不改名</p></div>
+  <div class="tbar"><button class="btn s pri" @click="syncSources" :disabled="syncing"><span v-html="I.scan"></span>{{syncing?'读取中':'一键读取供应模型'}}</button><button class="btn s pri" @click="save">保存别名</button><button class="btn s" @click="openAdd"><span v-html="I.plus"></span>添加模型</button><button class="btn s" @click="load" :disabled="ld"><span v-html="I.refresh"></span>刷新</button></div>
   <div class="card" v-if="sources.length" style="margin-bottom:12px"><div class="card-h">各通道供应模型<span class="sub">在线读取或回退本地/后台列表，互不合并</span></div>
     <table><thead><tr><th>通道</th><th>方式</th><th>数量</th><th>说明</th></tr></thead><tbody>
     <tr v-for="s in sources" :key="s.channel"><td>{{s.display_name||s.channel}} <span class="tag">{{s.channel}}</span></td><td><span class="badge" :class="modeClass(s)">{{modeText(s)}}</span></td><td>{{s.count||0}}</td><td class="mono" style="color:var(--fg3)">{{s.message||'—'}}</td></tr>
     </tbody></table>
   </div>
   <div class="card" v-for="s in modelSources" :key="'cat-'+s.channel" style="margin-bottom:12px">
-    <div class="card-h">{{s.display_name||s.channel}}<span class="sub">{{s.models.length}} 个模型</span><span class="badge" :class="modeClass(s)">{{modeText(s)}}</span><button v-if="s.channel==='workbuddy'" class="btn s" style="margin-left:auto" @click="editingModels=!editingModels">{{editingModels?'结束编辑':'编辑模型'}}</button></div>
-    <div class="hint" style="padding:8px 16px">客户端使用 {{s.channel}}/模型ID{{s.channel==='workbuddy'?'，也支持裸 ID。编辑后点击“保存全部”；在线读取会覆盖手动修改。':'；API Key 需绑定此通道。'}}</div>
+    <div class="card-h">{{s.display_name||s.channel}}<span class="sub">{{s.models.length}} 个模型</span><span class="badge" :class="modeClass(s)">{{modeText(s)}}</span></div>
+    <div class="hint" style="padding:8px 16px">客户端使用 {{s.channel}}/模型ID{{s.channel==='workbuddy'?'，也支持裸 ID':''}}。官方目录以一键读取为准；手动项可删除。</div>
     <table><thead><tr><th>模型 ID</th><th>名称</th><th>操作</th></tr></thead><tbody>
     <tr v-for="(x,i) in s.models" :key="s.channel+'-'+i">
-      <td class="mono"><input v-if="s.channel==='workbuddy'&&editingModels" v-model="x.id" aria-label="模型 ID"/><template v-else>{{s.channel}}/{{x.id}}</template> <span v-if="x.manual" class="tag">手动</span></td>
-      <td><input v-if="s.channel==='workbuddy'&&editingModels" v-model="x.name" aria-label="模型名称"/><template v-else>{{x.name||x.id}}</template></td>
-      <td><button v-if="s.channel==='workbuddy'&&editingModels" class="btn s danger" @click="rm(i)">删除</button><button v-else-if="s.channel!=='workbuddy'&&x.manual" class="btn s danger" @click="rmExtra(s.channel,x.id)">删除</button><span v-else class="muted">—</span></td>
+      <td class="mono">{{s.channel}}/{{x.id}} <span v-if="x.manual" class="tag">手动</span></td>
+      <td>{{x.name||x.id}}</td>
+      <td><button v-if="x.manual" class="btn s danger" @click="rmExtra(s.channel,x.id)">删除</button><span v-else class="muted">—</span></td>
     </tr>
     <tr v-if="!s.models.length"><td colspan="3" class="empty">暂无模型</td></tr>
     </tbody></table>
@@ -985,7 +973,7 @@ createApp({
     <tr v-for="(v,k) in aliasRows" :key="k"><td class="mono" style="font-weight:600">{{k}} <span v-if="isBuiltin(k)" class="tag" style="margin-left:6px">内置</span></td><td class="mono">{{v}}</td><td><button v-if="!isBuiltin(k)" class="btn s danger" @click="rmAlias(k)">删除</button><span v-else class="muted">—</span></td></tr>
     <tr v-if="!Object.keys(aliasRows).length"><td colspan="3" class="empty">该通道暂无别名</td></tr>
     </tbody></table>
-    <div style="padding:12px 16px;font-size:12px;color:var(--fg3);border-top:1px solid var(--border2)">内置别名不可删除或覆盖。添加后需点击“保存全部”。</div>
+    <div style="padding:12px 16px;font-size:12px;color:var(--fg3);border-top:1px solid var(--border2)">内置别名不可删除或覆盖。添加后需点击“保存别名”。</div>
   </div>
   </template>
   <div class="card card-p" style="margin-top:16px"><div style="font-weight:600;font-size:13px;margin-bottom:10px">接入说明</div><div class="codeblk"><span class="k">Base URL</span>: http://127.0.0.1:8787/v1
