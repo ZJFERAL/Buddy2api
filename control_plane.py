@@ -283,109 +283,125 @@ async def _channel_accounts(channel: str, status: str = "active") -> list[dict]:
     return rows
 
 
+_DASHBOARD_QUOTA_CACHE_SEC = 300
+
+
+async def _summarize_workbuddy_credit(provider, accounts: list[dict], force: bool) -> tuple[dict, list]:
+    resources = []
+    if accounts:
+        resources = await _gather_limited(
+            accounts,
+            lambda account: auth_manager.fetch_account_resources(
+                account,
+                force=force,
+                max_age_seconds=0 if force else _DASHBOARD_QUOTA_CACHE_SEC,
+            ),
+            limit=2,
+        )
+    ok = [row for row in resources if row.get("ok")]
+    remaining = round(sum(float(row.get("total_dosage") or row.get("available_total") or 0) for row in ok), 4)
+    row = {
+        "id": "workbuddy",
+        "display_name": getattr(provider, "display_name", "workbuddy"),
+        "unit": "credit",
+        "remaining": remaining,
+        "ok": True,
+        "accounts": len(accounts),
+        "ok_accounts": len(ok),
+        "unsupported": False,
+        "expiring_7d_total": round(sum(float(item.get("expiring_7d_total") or 0) for item in ok), 4),
+        "expiring_30d_total": round(sum(float(item.get("expiring_30d_total") or 0) for item in ok), 4),
+        "package_count": sum(int(item.get("package_count") or 0) for item in ok),
+    }
+    return row, resources
+
+
+async def _summarize_quota_channel(channel: str, provider, accounts: list[dict]) -> dict:
+    fetch_quota = getattr(provider, "fetch_quota", None) if provider else None
+    if fetch_quota is None:
+        return {
+            "id": channel,
+            "display_name": getattr(provider, "display_name", channel) if provider else channel,
+            "unit": "unknown",
+            "remaining": None,
+            "ok": True,
+            "accounts": len(accounts),
+            "unsupported": True,
+            "message": "quota API not available",
+        }
+    snapshots = await _gather_limited(accounts, fetch_quota, limit=2)
+    remaining_values = []
+    used_values = []
+    limit_values = []
+    ok_count = 0
+    unsupported = False
+    message = ""
+    channel_unit = "unknown"
+    for snapshot in snapshots:
+        unit = str(
+            (getattr(snapshot, "unit", None) if not isinstance(snapshot, dict) else snapshot.get("unit"))
+            or "unknown"
+        )
+        ok = bool(getattr(snapshot, "ok", None) if not isinstance(snapshot, dict) else snapshot.get("ok"))
+        snap_unsupported = bool(
+            getattr(snapshot, "unsupported", False) if not isinstance(snapshot, dict) else snapshot.get("unsupported")
+        )
+        extra = getattr(snapshot, "extra", None) if not isinstance(snapshot, dict) else snapshot.get("extra")
+        if not isinstance(extra, dict):
+            extra = {}
+        if channel_unit == "unknown" and unit in {"credit", "token"}:
+            channel_unit = unit
+        if snap_unsupported:
+            unsupported = True
+            message = (
+                getattr(snapshot, "message", "") if not isinstance(snapshot, dict) else snapshot.get("message") or ""
+            )
+        if ok:
+            ok_count += 1
+        value = getattr(snapshot, "remaining", None) if not isinstance(snapshot, dict) else snapshot.get("remaining")
+        if unit == channel_unit and value is not None and not snap_unsupported:
+            remaining_values.append(float(value))
+        if unit == "token" and not snap_unsupported:
+            if extra.get("used") is not None:
+                used_values.append(float(extra["used"]))
+            if extra.get("limit") is not None:
+                limit_values.append(float(extra["limit"]))
+    remaining = round(sum(remaining_values), 4) if remaining_values else None
+    if channel_unit == "unknown":
+        channel_unit = "credit" if channel != "qclaw" else "token"
+    return {
+        "id": channel,
+        "display_name": getattr(provider, "display_name", channel),
+        "unit": channel_unit,
+        "remaining": remaining,
+        "used": round(sum(used_values), 4) if used_values else None,
+        "limit": round(sum(limit_values), 4) if limit_values else None,
+        "ok": True,
+        "accounts": len(accounts),
+        "ok_accounts": ok_count,
+        "unsupported": remaining is None and not used_values and not limit_values,
+        "message": message or ("no quota number" if remaining is None else ""),
+    }
+
+
 async def credit_summary(force: bool = False) -> dict:
-    channels = []
-    workbuddy_resources = []
-    for channel in providers.enabled_provider_ids():
+    async def one_channel(channel: str):
         provider = providers.get_provider(channel)
         accounts = await _channel_accounts(channel)
         if channel == "workbuddy":
-            resources = []
-            if accounts:
-                resources = await _gather_limited(
-                    accounts,
-                    lambda account: auth_manager.fetch_account_resources(account, force=force),
-                    limit=2,
-                )
+            row, resources = await _summarize_workbuddy_credit(provider, accounts, force)
+            return row, resources
+        return await _summarize_quota_channel(channel, provider, accounts), []
+
+    gathered = await asyncio.gather(
+        *(one_channel(channel) for channel in providers.enabled_provider_ids())
+    )
+    channels = []
+    workbuddy_resources = []
+    for row, resources in gathered:
+        channels.append(row)
+        if row.get("id") == "workbuddy":
             workbuddy_resources = resources
-            ok = [row for row in resources if row.get("ok")]
-            remaining = round(sum(float(row.get("total_dosage") or row.get("available_total") or 0) for row in ok), 4)
-            channels.append(
-                {
-                    "id": channel,
-                    "display_name": getattr(provider, "display_name", channel),
-                    "unit": "credit",
-                    "remaining": remaining,
-                    "ok": True,
-                    "accounts": len(accounts),
-                    "ok_accounts": len(ok),
-                    "unsupported": False,
-                    "expiring_7d_total": round(sum(float(row.get("expiring_7d_total") or 0) for row in ok), 4),
-                    "expiring_30d_total": round(sum(float(row.get("expiring_30d_total") or 0) for row in ok), 4),
-                    "package_count": sum(int(row.get("package_count") or 0) for row in ok),
-                }
-            )
-            continue
-        fetch_quota = getattr(provider, "fetch_quota", None) if provider else None
-        if fetch_quota is None:
-            channels.append(
-                {
-                    "id": channel,
-                    "display_name": getattr(provider, "display_name", channel) if provider else channel,
-                    "unit": "unknown",
-                    "remaining": None,
-                    "ok": True,
-                    "accounts": len(accounts),
-                    "unsupported": True,
-                    "message": "quota API not available",
-                }
-            )
-            continue
-        remaining_values = []
-        used_values = []
-        limit_values = []
-        ok_count = 0
-        unsupported = False
-        message = ""
-        channel_unit = "unknown"
-        for account in accounts:
-            snapshot = await fetch_quota(account)
-            unit = str(
-                (getattr(snapshot, "unit", None) if not isinstance(snapshot, dict) else snapshot.get("unit"))
-                or "unknown"
-            )
-            ok = bool(getattr(snapshot, "ok", None) if not isinstance(snapshot, dict) else snapshot.get("ok"))
-            snap_unsupported = bool(
-                getattr(snapshot, "unsupported", False) if not isinstance(snapshot, dict) else snapshot.get("unsupported")
-            )
-            extra = getattr(snapshot, "extra", None) if not isinstance(snapshot, dict) else snapshot.get("extra")
-            if not isinstance(extra, dict):
-                extra = {}
-            if channel_unit == "unknown" and unit in {"credit", "token"}:
-                channel_unit = unit
-            if snap_unsupported:
-                unsupported = True
-                message = (
-                    getattr(snapshot, "message", "") if not isinstance(snapshot, dict) else snapshot.get("message") or ""
-                )
-            if ok:
-                ok_count += 1
-            value = getattr(snapshot, "remaining", None) if not isinstance(snapshot, dict) else snapshot.get("remaining")
-            if unit == channel_unit and value is not None and not snap_unsupported:
-                remaining_values.append(float(value))
-            if unit == "token" and not snap_unsupported:
-                if extra.get("used") is not None:
-                    used_values.append(float(extra["used"]))
-                if extra.get("limit") is not None:
-                    limit_values.append(float(extra["limit"]))
-        remaining = round(sum(remaining_values), 4) if remaining_values else None
-        if channel_unit == "unknown":
-            channel_unit = "credit" if channel != "qclaw" else "token"
-        channels.append(
-            {
-                "id": channel,
-                "display_name": getattr(provider, "display_name", channel),
-                "unit": channel_unit,
-                "remaining": remaining,
-                "used": round(sum(used_values), 4) if used_values else None,
-                "limit": round(sum(limit_values), 4) if limit_values else None,
-                "ok": True,
-                "accounts": len(accounts),
-                "ok_accounts": ok_count,
-                "unsupported": remaining is None and not used_values and not limit_values,
-                "message": message or ("no quota number" if remaining is None else ""),
-            }
-        )
     now_ts = int(time.time())
     ok_resources = [row for row in workbuddy_resources if row.get("ok")]
     stale_count = sum(1 for row in workbuddy_resources if row.get("stale"))

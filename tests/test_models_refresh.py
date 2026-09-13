@@ -216,6 +216,30 @@ def test_admin_models_page_has_one_click_control():
     assert "editingModels" not in html
 
 
+def test_dashboard_does_not_block_on_credit_summary():
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+    assert "api.get('/admin/stats'" in html
+    assert "api.get('/admin/credit-summary'" in html
+    assert "Promise.all([api.get('/admin/stats'" not in html
+    assert "正在读取上游额度" in html
+
+
+def test_dashboard_uses_line_and_pie_charts():
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+    assert "hour-line" in html
+    assert "hour-poly" in html
+    assert "qualityPie" in html
+    assert "modelPie" in html
+    assert "donut-split" in html
+    assert "spark-line" in html
+    assert "mini-line" in html
+    assert "mini-dot" in html
+    assert "近 7 日" in html
+    assert "hour-bars" not in html
+    assert "今日质量" in html
+    assert "模型占比" in html
+
+
 def test_account_test_ui_lets_user_pick_model():
     html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
     assert "openTest" in html
