@@ -194,10 +194,10 @@ _BUILTIN_ALIASES = {
 
 
 def resolve_model_alias(model: str) -> str:
-    """Resolve an alias to its real backend model ID. Returns original if no match."""
-    aliases = db.get_setting("model_aliases", {})
-    merged = {**_BUILTIN_ALIASES, **aliases}
-    return merged.get(model, model)
+    """Resolve a WorkBuddy alias to its real backend model ID."""
+    import aliases
+
+    return aliases.resolve("workbuddy", model)
 
 
 def _configured_reasoning_default(model: str) -> str | None:
@@ -247,9 +247,10 @@ def build_backend_body(payload: dict) -> dict:
 
 
 def get_all_aliases() -> dict:
-    """Return merged aliases (built-in + user-defined)."""
-    user_aliases = db.get_setting("model_aliases", {})
-    return {**_BUILTIN_ALIASES, **user_aliases}
+    """Return merged WorkBuddy aliases (built-in + user-defined)."""
+    import aliases
+
+    return aliases.merged_map("workbuddy")
 
 
 def _safe_err(raw: bytes, status: int) -> dict:

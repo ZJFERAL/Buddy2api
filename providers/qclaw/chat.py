@@ -11,13 +11,15 @@ import httpx
 import auth_manager
 import database as db
 from reasoning_controls import normalize_chat_reasoning
-from providers.qclaw.constants import AIZONE_BASE, ALIASES, CHANNEL_ID, RETRYABLE_STATUS
+from providers.qclaw.constants import AIZONE_BASE, CHANNEL_ID, RETRYABLE_STATUS
 from providers.qclaw.sign import aizone_headers
 
 
 def translate_model(model: str) -> str:
+    import aliases
+
     inner = (model or "default").strip() or "default"
-    return ALIASES.get(inner, inner)
+    return aliases.resolve(CHANNEL_ID, inner)
 
 
 def _alt_text(value) -> str:

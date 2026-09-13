@@ -1,4 +1,5 @@
 @echo off
+setlocal
 title Buddy 2 API
 
 cd /d "%~dp0"
@@ -10,8 +11,8 @@ echo  ========================================
 echo.
 
 REM Prefer the fixed Conda environment. Activation is not required.
-set "CONDA_EXE="
-for /f "delims=" %%I in ('where conda 2^>nul') do if not defined CONDA_EXE set "CONDA_EXE=%%I"
+set "BUDDY_CONDA_EXE="
+for /f "delims=" %%I in ('where conda.exe 2^>nul') do if not defined BUDDY_CONDA_EXE set "BUDDY_CONDA_EXE=%%I"
 for %%I in (
     "%USERPROFILE%\miniconda3\Scripts\conda.exe"
     "%USERPROFILE%\anaconda3\Scripts\conda.exe"
@@ -19,35 +20,35 @@ for %%I in (
     "%LOCALAPPDATA%\anaconda3\Scripts\conda.exe"
     "%ProgramData%\miniconda3\Scripts\conda.exe"
     "%ProgramData%\anaconda3\Scripts\conda.exe"
-) do if not defined CONDA_EXE if exist "%%~I" set "CONDA_EXE=%%~I"
+) do if not defined BUDDY_CONDA_EXE if exist "%%~I" set "BUDDY_CONDA_EXE=%%~I"
 
-if defined CONDA_EXE goto use_conda
+if defined BUDDY_CONDA_EXE goto use_conda
 goto use_venv
 
 :use_conda
 echo  [Environment] Conda: buddy2api
-call "%CONDA_EXE%" run -n buddy2api python --version >nul 2>&1
+call "%BUDDY_CONDA_EXE%" run -n buddy2api python --version >nul 2>&1
 if errorlevel 1 (
     echo  [Setup] Creating Conda environment buddy2api ^(Python 3.12^)...
-    call "%CONDA_EXE%" create -n buddy2api python=3.12 -y
+    call "%BUDDY_CONDA_EXE%" create -n buddy2api python=3.12 -y
     if errorlevel 1 goto conda_error
 )
-call "%CONDA_EXE%" run -n buddy2api python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+call "%BUDDY_CONDA_EXE%" run -n buddy2api python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
 if errorlevel 1 (
     echo  [Update] Upgrading buddy2api to Python 3.12...
-    call "%CONDA_EXE%" install -n buddy2api python=3.12 -y
+    call "%BUDDY_CONDA_EXE%" install -n buddy2api python=3.12 -y
     if errorlevel 1 goto conda_error
 )
-call "%CONDA_EXE%" run -n buddy2api python -c "import fastapi, uvicorn, httpx, cryptography" >nul 2>&1
+call "%BUDDY_CONDA_EXE%" run -n buddy2api python -c "import fastapi, uvicorn, httpx, cryptography" >nul 2>&1
 if errorlevel 1 (
     echo  [Setup] Installing dependencies...
-    call "%CONDA_EXE%" run -n buddy2api python -m pip install -r requirements.txt
+    call "%BUDDY_CONDA_EXE%" run -n buddy2api python -m pip install -r requirements.txt
     if errorlevel 1 goto dependency_error
 )
 echo  [Start] http://127.0.0.1:8787
 echo  [Stop] Ctrl+C
 echo.
-call "%CONDA_EXE%" run --no-capture-output -n buddy2api python server.py --port 8787 %*
+call "%BUDDY_CONDA_EXE%" run --no-capture-output -n buddy2api python server.py --port 8787 %*
 goto end
 
 :use_venv

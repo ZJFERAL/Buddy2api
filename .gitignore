@@ -82,3 +82,6 @@ desktop.ini
 # 本地运行时记忆/产物
 .workbuddy/
 .debug/
+
+# Ant Code composer uploads
+ant-code-uploads/

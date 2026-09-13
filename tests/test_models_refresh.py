@@ -66,7 +66,7 @@ TRAEWORK_HTTP_PAYLOAD = {
     "data": {
         "list": [
             {
-                "function": "solo_coder",
+                "function": "solo_work_remote",
                 "models": [
                     {"name": TRAE_DOUBAO_CODE, "display_name": TRAE_DOUBAO_CODE},
                     {"name": TRAE_DOUBAO_TURBO, "display_name": TRAE_DOUBAO_TURBO},
@@ -179,6 +179,10 @@ def _install_supplier_http(monkeypatch):
         async def get(self, url, **kwargs):
             requested.append(("GET", str(url)))
             if "/api/remote/v1/models" in str(url):
+                assert kwargs.get("params") == {
+                    "functions": "solo_work_remote",
+                    "show_custom_model": "true",
+                }
                 return _FakeResponse(TRAEWORK_HTTP_PAYLOAD)
             if "/api/v2/model/list" in str(url):
                 return _FakeResponse(QWENWORK_HTTP_PAYLOAD)
@@ -206,6 +210,8 @@ def test_admin_models_page_has_one_click_control():
     assert "addForm.channel" in html
     assert "/admin/models/catalogs" in html
     assert "submitAdd" in html
+    assert "aliasChannel" in html
+    assert "别名映射" in html
 
 
 def test_account_test_ui_lets_user_pick_model():

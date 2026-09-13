@@ -26,20 +26,18 @@ class WorkBuddyProvider:
         return list(proxy.DEFAULT_MODELS)
 
     def alias_map(self) -> dict[str, str]:
-        try:
-            aliases = db.get_setting("model_aliases", {}) or {}
-        except sqlite3.OperationalError:
-            aliases = {}
-        if not isinstance(aliases, dict):
-            aliases = {}
-        return {**proxy._BUILTIN_ALIASES, **aliases}
+        import aliases
+
+        return aliases.merged_map(self.id)
 
     def accepts_model(self, inner: str) -> bool:
         ids = {str(item.get("id")) for item in self.list_models() if isinstance(item, dict)}
         return inner in ids or inner in self.alias_map()
 
     def translate_model(self, model: str) -> str:
-        return proxy.resolve_model_alias(model)
+        import aliases
+
+        return aliases.resolve(self.id, model)
 
     def pick_account(self, exclude_ids: set[int] | None = None) -> Optional[dict]:
         return auth_manager.pick_account(exclude_ids, provider=self.id)
