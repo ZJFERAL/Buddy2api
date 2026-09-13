@@ -483,7 +483,7 @@ async def admin_channels(authorization: str | None = Header(default=None)):
 @app.get("/admin/stats")
 async def admin_stats(authorization: str | None = Header(default=None)):
     _check_admin(authorization)
-    return db.get_stats()
+    return await run_in_threadpool(db.get_stats)
 
 
 @app.get("/admin/credit-summary")

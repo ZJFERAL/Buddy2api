@@ -292,17 +292,40 @@ body{background:#e9e9e6;letter-spacing:0;overflow-x:hidden}
 .today-metric-top{display:flex;align-items:center;gap:9px}.today-metric-icon{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;background:var(--metric-bg);color:var(--metric);flex:0 0 auto}.today-metric-icon svg{width:16px;height:16px}
 .today-metric-label{font-size:11px;color:var(--fg2);font-weight:700}.today-value-row{display:flex;align-items:baseline;gap:7px;margin-top:12px;min-width:0}.today-value{font-family:var(--mono);font-size:30px;font-weight:800;line-height:1;color:var(--fg);overflow:hidden;text-overflow:ellipsis}.today-unit{font-size:10px;color:var(--fg3);font-weight:700;text-transform:uppercase;white-space:nowrap}
 .today-meta{font-size:11px;color:var(--fg2);margin-top:7px;min-height:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.today-trend{display:grid;grid-template-columns:minmax(96px,1fr) auto;gap:12px;align-items:end;margin-top:12px;padding-top:10px;border-top:1px solid var(--border2)}
-.today-spark{height:36px;display:flex;align-items:flex-end;gap:4px}.today-spark span{flex:1;min-width:3px;max-width:18px;height:4px;border-radius:2px 2px 0 0;background:var(--metric);opacity:.32}.today-spark span:last-child{opacity:1}
-.today-foot{font-size:10px;color:var(--fg3);white-space:nowrap;text-align:right}.today-foot strong{display:block;color:var(--metric);font-size:11px;margin-bottom:2px}
+.today-trend{margin-top:12px;padding-top:10px;border-top:1px solid var(--border2)}
+.today-foot{font-size:10px;color:var(--fg3);margin-bottom:8px}.today-foot strong{color:var(--metric);margin-right:6px}
+.mini-line{display:grid;grid-template-columns:46px minmax(0,1fr);grid-template-rows:92px auto;gap:4px 6px;align-items:stretch}
+.mini-y{display:flex;flex-direction:column;justify-content:space-between;text-align:right;font-family:var(--mono);font-size:9px;color:var(--fg3);padding:1px 0}
+.mini-plot{position:relative;min-width:0;height:92px}
+.mini-grid{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}.mini-grid span{border-top:1px dashed #deded8}
+.mini-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.spark-area{fill:var(--metric);opacity:.14}.spark-line{fill:none;stroke:var(--metric);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.mini-dot{position:absolute;z-index:2;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#fff;border:2px solid var(--metric);box-sizing:border-box;pointer-events:auto}
+.mini-dot.today{background:var(--metric)}
+.mini-x{grid-column:2;display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--fg3);line-height:1.2}
+.mini-caption{grid-column:1/-1;font-size:10px;color:var(--fg3);margin-top:2px}
 .today-hour-chart{--chart:#d85410;--chart-soft:#fff0df}.today-hour-chart.tokens{--chart:#14755f;--chart-soft:#e8f5f0}.today-hour-chart.credit{--chart:#45566a;--chart-soft:#edf1f5}
 .today-chart-head{gap:16px}.today-chart-title{display:flex;align-items:baseline;gap:10px;min-width:0}.today-chart-controls{flex:0 0 auto}.today-hour-chart .seg button.on{background:var(--chart);color:#fff}
 .hour-chart-body{padding:16px 18px 13px}.hour-chart-meta{display:flex;align-items:center;gap:8px;margin-bottom:11px;font-size:10px;color:var(--fg3)}.hour-chart-meta strong{font-size:12px;color:var(--chart)}
 .hour-chart-canvas{display:grid;grid-template-columns:48px minmax(0,1fr);gap:8px}.hour-y-axis{height:168px;display:flex;flex-direction:column;justify-content:space-between;text-align:right;font-family:var(--mono);font-size:9px;color:var(--fg3);padding-bottom:2px}
-.hour-plot{height:168px;position:relative;min-width:0}.hour-grid{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}.hour-grid span{border-top:1px dashed #deded8}.hour-bars{position:absolute;inset:0;z-index:1;display:grid;grid-template-columns:repeat(24,minmax(3px,1fr));gap:5px;align-items:end}
-.hour-bar-slot{height:100%;display:flex;align-items:flex-end;justify-content:center}.hour-bar{width:100%;max-width:16px;min-height:3px;border-radius:3px 3px 0 0;background:var(--chart);opacity:.16;transition:opacity .12s}.hour-bar.has-value{opacity:.82}.hour-bar.current{opacity:1}.hour-bar.future{height:0!important;min-height:0;opacity:0}
+.hour-plot{height:168px;position:relative;min-width:0}.hour-grid{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}.hour-grid span{border-top:1px dashed #deded8}
 .hour-chart-empty{position:absolute;z-index:2;inset:0;display:grid;place-items:center;color:var(--fg3);font-size:11px;pointer-events:none}.hour-chart-empty span{background:#fff;border:1px solid var(--border2);border-radius:5px;padding:6px 9px}
 .hour-x-axis{margin:7px 0 0 56px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--fg3)}
+.hour-line{position:absolute;inset:0;width:100%;height:100%;z-index:1;overflow:visible}
+.hour-area{fill:var(--chart);opacity:.14}
+.hour-poly{fill:none;stroke:var(--chart);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.hour-hover{position:absolute;inset:0;z-index:2;display:grid;grid-template-columns:repeat(24,minmax(0,1fr))}
+.hour-hover span{display:block;height:100%;cursor:crosshair}.hour-hover span.future{pointer-events:none}
+.donut-split{display:grid;grid-template-columns:148px minmax(0,1fr);gap:16px;align-items:center}
+.donut{width:132px;height:132px;border-radius:50%;position:relative;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(28,27,24,.04)}
+.donut-hole{position:absolute;inset:24px;border-radius:50%;background:#fff;display:grid;place-items:center;text-align:center;box-shadow:0 0 0 1px var(--border2)}
+.donut-hole .v{font-size:17px;font-weight:800;font-family:var(--mono);line-height:1}
+.donut-hole .k{font-size:10px;color:var(--fg3);margin-top:3px}
+.pie-legend{display:flex;flex-direction:column;gap:7px;min-width:0}
+.pie-leg{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12px}
+.pie-swatch{width:10px;height:10px;border-radius:99px}
+.pie-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.pie-val{font-family:var(--mono);font-size:11px;color:var(--fg2);white-space:nowrap}
 .dash-hero{grid-template-columns:minmax(0,1.35fr) minmax(360px,.65fr);gap:14px;padding:16px 18px;background:#fff;border-color:var(--border);border-radius:8px;margin-bottom:14px}
 .health-title{font-size:20px;font-weight:800}.health-sub{font-size:11px}.health-dot{width:9px;height:9px}.health-kpis{gap:0;border:1px solid var(--border2);border-radius:7px;overflow:hidden}
 .health-kpi{border:0;border-right:1px solid var(--border2);border-radius:0;padding:10px 12px;background:#fafaf8}.health-kpi:last-child{border-right:0}.health-kpi .v{font-size:18px}
@@ -338,8 +361,9 @@ table{font-size:12px}.table-scroll{background:#fff}th{padding:9px 12px;backgroun
   .top-actions{gap:5px}.refresh-cta{width:36px;height:36px;padding:0;justify-content:center}.refresh-cta span:last-child{display:none}
   .topnav{margin:0 -10px -9px;padding:6px 10px;background:#171614}.topnav .nav-item{padding:7px 9px}.topnav .nav-item span{display:none}
   .content{padding:10px}.phead{display:block;margin-bottom:9px}.phead h1{font-size:18px}.phead p{margin-top:2px}.tbar{align-items:stretch;overflow-x:auto;flex-wrap:nowrap}
-  .today-usage-head{padding:10px 12px;display:grid;justify-content:stretch;gap:7px}.today-period{justify-self:start}.today-metrics{grid-template-columns:1fr 1fr}.today-metric{padding:13px 12px}.today-metric:nth-child(2){border-right:0}.today-metric:last-child{grid-column:1/-1;border-top:1px solid var(--border2)}.today-value{font-size:25px}.today-trend{gap:8px}.today-meta{white-space:normal;min-height:31px}
-  .today-chart-head{align-items:flex-start;flex-direction:column}.today-chart-title{display:block}.today-chart-title .sub{display:block;max-width:none;text-align:left;margin-top:3px}.today-chart-controls{width:100%}.today-chart-controls .seg{display:flex;width:100%}.today-chart-controls button{flex:1}.hour-chart-body{padding:14px 12px 12px}.hour-chart-canvas{grid-template-columns:40px minmax(0,1fr);gap:6px}.hour-bars{gap:2px}.hour-x-axis{margin-left:46px}
+  .today-usage-head{padding:10px 12px;display:grid;justify-content:stretch;gap:7px}.today-period{justify-self:start}.today-metrics{grid-template-columns:1fr 1fr}.today-metric{padding:13px 12px}.today-metric:nth-child(2){border-right:0}.today-metric:last-child{grid-column:1/-1;border-top:1px solid var(--border2)}.today-value{font-size:25px}.today-meta{white-space:normal;min-height:31px}
+  .today-chart-head{align-items:flex-start;flex-direction:column}.today-chart-title{display:block}.today-chart-title .sub{display:block;max-width:none;text-align:left;margin-top:3px}.today-chart-controls{width:100%}.today-chart-controls .seg{display:flex;width:100%}.today-chart-controls button{flex:1}.hour-chart-body{padding:14px 12px 12px}.hour-chart-canvas{grid-template-columns:40px minmax(0,1fr);gap:6px}.hour-x-axis{margin-left:46px}
+  .donut-split{grid-template-columns:1fr;justify-items:center}.donut{margin:0 auto}
   .dash-hero,.dash-grid,.dash-grid.wide,.dash-grid.thirds,.detect-grid,.detect-custom,.form-grid,.info-row,.setup-panel,.detail-grid{grid-template-columns:1fr}
   .dash-hero{padding:14px}.health-kpis{grid-template-columns:repeat(3,1fr)}.metric-row{grid-template-columns:1fr}.metric{border-right:0;border-bottom:1px solid var(--border2)}.metric:last-child{border-bottom:0}
   .card-h{font-size:14px}.card-h .sub{max-width:50%;text-align:right}.searchbox{min-width:190px}.modal{max-width:calc(100vw - 20px)}
@@ -389,7 +413,7 @@ createApp({
   template:`
   <div class="layout">
     <header class="topbar">
-      <div class="brand-block"><div class="brand-symbol">B2</div><div class="brand-copy"><div class="brand-title">Buddy 2 API</div><div class="brand-meta">Local model gateway · v2.1.7</div></div></div>
+      <div class="brand-block"><div class="brand-symbol">B2</div><div class="brand-copy"><div class="brand-title">Buddy 2 API</div><div class="brand-meta">Local model gateway · v2.1.8</div></div></div>
       <nav class="topnav"><div v-for="n in nav" :key="n.k" class="nav-item" :class="{on:page===n.k}" @click="go(n.k)" v-html="n.i+'<span>'+n.l+'</span>'"></div></nav>
       <div class="top-actions">
         <button class="refresh-cta" @click="hardRefresh"><span v-html="I.refresh"></span><span>刷新</span></button>
@@ -407,8 +431,9 @@ createApp({
   </div>`
 }).component('dash',{props:['token','toast'],setup(p){
   const s=ref(null),credit=ref(null),ld=ref(true),cld=ref(false),copied=ref(''),err=ref(''),updatedAt=ref(''),todayChartMetric=ref('requests');
-  async function load(forceCredit=false){ld.value=true;err.value='';try{const [stats,cred]=await Promise.all([api.get('/admin/stats',p.token),api.get('/admin/credit-summary'+(forceCredit?'?force=1':''),p.token)]);s.value=stats;credit.value=cred;updatedAt.value=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch(e){s.value=null;err.value=apiErr(e,'加载失败：'+e.message);p.toast(err.value,'err')}ld.value=false}
-  async function refreshCredit(){if(cld.value)return;cld.value=true;try{credit.value=await api.get('/admin/credit-summary?force=1',p.token);updatedAt.value=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});p.toast('官方额度已刷新')}catch(e){p.toast(apiErr(e,'官方额度刷新失败'),'err')}cld.value=false}
+  async function loadCredit(force=false,toastOk=false){if(cld.value)return;cld.value=true;try{credit.value=await api.get('/admin/credit-summary'+(force?'?force=1':''),p.token);updatedAt.value=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});if(toastOk)p.toast('官方额度已刷新')}catch(e){p.toast(apiErr(e,'官方额度刷新失败'),'err')}cld.value=false}
+  async function load(forceCredit=false){ld.value=true;err.value='';try{s.value=await api.get('/admin/stats',p.token);updatedAt.value=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});ld.value=false;await loadCredit(forceCredit,false)}catch(e){s.value=null;err.value=apiErr(e,'加载失败：'+e.message);p.toast(err.value,'err');ld.value=false}}
+  async function refreshCredit(){await loadCredit(true,true)}
   function n(v){return Number(v||0).toLocaleString()}
   function tok(v){v=Number(v||0);if(v>=1e9)return (v/1e9).toFixed(v>=1e10?1:2).replace(/\.?0+$/,'')+'B';if(v>=1e6)return (v/1e6).toFixed(v>=1e7?1:2).replace(/\.?0+$/,'')+'M';return v.toLocaleString()}
   function pct(v){return (Number(v||0)).toFixed(Number(v||0)%1?1:0)+'%'}
@@ -430,6 +455,18 @@ createApp({
     {name:'Token',kind:'tokens',values:d.map(x=>Number(x.tokens||0)),max:Math.max(...d.map(x=>Number(x.tokens||0)),1)},
     {name:'Credit',kind:'credit',values:d.map(x=>Number(x.credits||0)),max:Math.max(...d.map(x=>Number(x.credits||0)),1)},
   ]});
+  function sparkLine(card){
+    const vals=card.values||[];
+    if(!vals.length)return{line:'',area:'',pts:[],maxLabel:'0',midLabel:'0'};
+    const max=Math.max(card.max,1),n=vals.length;
+    const pts=vals.map((p,i)=>{
+      const x=n===1?50:i/(n-1)*100,y=100-(Number(p.value||0)/max)*100,date=String(p.date||'');
+      return{x,y,xPct:x,yPct:y,date,value:p.value,label:date.length>=10?date.slice(5):date,p};
+    });
+    const line=pts.map(pt=>pt.x.toFixed(1)+','+pt.y.toFixed(1)).join(' ');
+    const first=pts[0],last=pts[pts.length-1];
+    return{line,area:first.x.toFixed(1)+',100 '+line+' '+last.x.toFixed(1)+',100',pts,maxLabel:heatValue(card.kind,max),midLabel:heatValue(card.kind,max/2)}
+  }
   const todayLabel=computed(()=>new Date().toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'short'}));
   const todayUsage=computed(()=>{
     const t=s.value?.today||{},requests=Number(t.requests||0),daily=s.value?.daily||[];
@@ -439,7 +476,7 @@ createApp({
       {kind:'credit',label:'今日额度消耗',value:money(t.credit),unit:'Credit',meta:n(requests)+' 次调用 · 单次 '+money(requests?Number(t.credit||0)/requests:0),foot:credit.value?.channels?.length?credit.value.channels.map(c=>c.id+' '+channelQuotaText(c)).join(' · '):'累计 '+money(s.value?.total_credit),footLabel:credit.value?.channels?.length?'按通道额度':'累计消耗',icon:I.wallet,...creditPoints},
       {kind:'requests',label:'今日调用次数',value:n(requests),unit:'次',meta:'成功 '+n(t.success)+' · 异常 '+n(Number(t.errors||0)+Number(t.filtered||0)),foot:pct(t.success_rate),footLabel:'成功率',icon:I.activity,...requestPoints},
       {kind:'tokens',label:'今日 Token',value:tok(t.tokens),unit:'Tokens',meta:'单次平均 '+tok(requests?Math.round(Number(t.tokens||0)/requests):0),foot:'累计 '+tok(s.value?.total_tokens),footLabel:'全部时间',icon:I.tokens,...tokenPoints},
-    ]
+    ].map(card=>({...card,spark:sparkLine(card)}))
   });
   const todayChart=computed(()=>{
     const configs={requests:{label:'调用次数',unit:'次'},tokens:{label:'Token',unit:'tokens'},credit:{label:'额度消耗',unit:'credit'}};
@@ -448,12 +485,38 @@ createApp({
     const elapsed=rows.filter(row=>Number(row.hour)<=currentHour),max=Math.max(...elapsed.map(row=>row.value),0);
     return{...config,kind,currentHour,max,maxLabel:heatValue(kind,max),activeHours:elapsed.filter(row=>row.value>0).length,rows}
   });
+  function pieStyle(slices,total){
+    if(!total)return{background:'conic-gradient(#e8e8e2 0 100%)'};
+    let acc=0;const parts=[];
+    slices.forEach(item=>{if(!item.pct)return;const start=acc;acc+=item.pct;parts.push(item.color+' '+start.toFixed(2)+'% '+acc.toFixed(2)+'%')});
+    return{background:'conic-gradient('+(parts.join(',')||'#e8e8e2 0 100%')+')'}
+  }
+  const hourLine=computed(()=>{
+    const c=todayChart.value,rows=c.rows||[],max=Math.max(c.max,1),W=1000,H=168,pad=10,pts=[];
+    rows.forEach(row=>{if(row.hour>c.currentHour)return;pts.push({x:((row.hour+.5)/24)*W,y:H-pad-(Number(row.value||0)/max)*(H-pad*2),row,current:row.hour===c.currentHour})});
+    const points=pts.map(p=>p.x.toFixed(1)+','+p.y.toFixed(1)).join(' ');
+    const last=pts[pts.length-1],first=pts[0];
+    const area=pts.length?(first.x.toFixed(1)+','+H+' '+points+' '+last.x.toFixed(1)+','+H):'';
+    return{pts,points,area}
+  });
+  const qualityPie=computed(()=>{
+    const t=s.value?.today||{},success=Number(t.success||0),errors=Number(t.errors||0),filtered=Number(t.filtered||0),total=success+errors+filtered;
+    const slices=[{k:'ok',label:'成功',value:success,color:'#128665'},{k:'err',label:'错误',value:errors,color:'#cf3f32'},{k:'warn',label:'过滤',value:filtered,color:'#d99700'}].map(x=>({...x,pct:total?x.value/total*100:0}));
+    return{total,slices,style:pieStyle(slices,total)}
+  });
+  const modelPie=computed(()=>{
+    const rows=s.value?.model_stats||[],total=rows.reduce((a,m)=>a+Number(m.count||0),0);
+    const colors=['#e85d13','#14755f','#45566a','#d99700','#8a6a4a','#9aa0a6'];
+    const slices=rows.slice(0,5).map((m,i)=>({label:m.model,value:Number(m.count||0),color:colors[i]}));
+    const rest=rows.slice(5).reduce((a,m)=>a+Number(m.count||0),0);
+    if(rest)slices.push({label:'其他',value:rest,color:colors[5]});
+    const withPct=slices.map(x=>({...x,pct:total?x.value/total*100:0}));
+    return{total,slices:withPct,style:pieStyle(withPct,total)}
+  });
   function heatStyle(v,max){const r=Math.max(0,Math.min(1,Number(v||0)/Math.max(Number(max||1),1)));if(!v)return{background:'#e8e9e6',color:'#777872'};if(r<.25)return{background:'#fff0ce',color:'#8a5d22'};if(r<.5)return{background:'#ffc98f',color:'#734217'};if(r<.75)return{background:'#ff9855',color:'#592b0e'};if(r<.9)return{background:'#f15f14',color:'#fff'};return{background:'#3f403e',color:'#fff'}}
   function heatValue(kind,v){return kind==='tokens'?tok(v):(kind==='credit'?money(v):n(v))}
-  function sparkHeight(card,v){v=Number(v||0);return(v?Math.max(7,Math.round(v/Math.max(card.max,1)*36)):4)+'px'}
-  function hourBarHeight(v,max){v=Number(v||0);return(v?Math.max(6,Math.round(v/Math.max(max,1)*156)):3)+'px'}
   onMounted(load);
-  return{s,credit,ld,cld,copied,err,updatedAt,todayLabel,todayUsage,todayChartMetric,todayChart,load,refreshCredit,n,tok,pct,money,ms,fmt,healthClass,healthText,rateWidth,modelPct,copy,age,expireMeta,mx,heatRows,heatStyle,heatValue,sparkHeight,hourBarHeight,channelUnitLabel,channelQuotaText,I}
+  return{s,credit,ld,cld,copied,err,updatedAt,todayLabel,todayUsage,todayChartMetric,todayChart,hourLine,qualityPie,modelPie,load,refreshCredit,n,tok,pct,money,ms,fmt,healthClass,healthText,rateWidth,copy,age,expireMeta,heatRows,heatStyle,heatValue,channelUnitLabel,channelQuotaText,I}
 },template:`
 <div>
   <div class="phead"><h1>运行总览</h1><p>网关状态、额度和调用强度</p></div>
@@ -485,7 +548,19 @@ createApp({
           <div class="today-metric-top"><span class="today-metric-icon" v-html="card.icon"></span><div class="today-metric-label">{{card.label}}</div></div>
           <div class="today-value-row"><div class="today-value">{{card.value}}</div><div class="today-unit">{{card.unit}}</div></div>
           <div class="today-meta">{{card.meta}}</div>
-          <div class="today-trend"><div class="today-spark" aria-label="近 7 日趋势"><span v-for="point in card.values" :key="point.date" :style="{height:sparkHeight(card,point.value)}" :title="point.date+' · '+heatValue(card.kind,point.value)"></span></div><div class="today-foot"><strong>{{card.foot}}</strong>{{card.footLabel}}</div></div>
+          <div class="today-trend">
+            <div class="today-foot"><strong>{{card.foot}}</strong>{{card.footLabel}}</div>
+            <div class="mini-line" :aria-label="'近 7 日'+card.unit">
+              <div class="mini-y"><span>{{card.spark.maxLabel}}</span><span>{{card.spark.midLabel}}</span><span>0</span></div>
+              <div class="mini-plot">
+                <div class="mini-grid"><span></span><span></span><span></span></div>
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none"><polygon class="spark-area" :points="card.spark.area"/><polyline class="spark-line" :points="card.spark.line"/></svg>
+                <span class="mini-dot" v-for="(pt,i) in card.spark.pts" :key="card.kind+'-'+pt.date" :class="{today:i===card.spark.pts.length-1}" :style="{left:pt.xPct+'%',top:pt.yPct+'%'}" :title="pt.date+' · '+heatValue(card.kind,pt.value)+' '+card.unit"></span>
+              </div>
+              <div class="mini-x"><span v-for="pt in card.spark.pts" :key="'x-'+pt.date">{{pt.label}}</span></div>
+              <div class="mini-caption">近 7 日 · 纵轴 {{card.unit}} · 实心点是今天</div>
+            </div>
+          </div>
         </article>
       </div>
     </section>
@@ -494,12 +569,16 @@ createApp({
       <div class="card-h today-chart-head"><div class="today-chart-title"><span id="today-chart-title">今日 24 小时趋势</span><span class="sub">按本机时间逐小时聚合</span></div><div class="today-chart-controls"><div class="seg"><button :class="{on:todayChartMetric==='requests'}" @click="todayChartMetric='requests'">调用</button><button :class="{on:todayChartMetric==='tokens'}" @click="todayChartMetric='tokens'">Token</button><button :class="{on:todayChartMetric==='credit'}" @click="todayChartMetric='credit'">额度</button></div></div></div>
       <div class="hour-chart-body">
         <div class="hour-chart-meta"><span>当前指标</span><strong>{{todayChart.label}}</strong><span>峰值 {{todayChart.maxLabel}} {{todayChart.unit}}</span><span>活跃 {{todayChart.activeHours}} 小时</span></div>
-        <div class="hour-chart-canvas"><div class="hour-y-axis"><span>{{todayChart.maxLabel}}</span><span>{{heatValue(todayChart.kind,todayChart.max/2)}}</span><span>0</span></div><div class="hour-plot"><div class="hour-grid"><span></span><span></span><span></span></div><div class="hour-bars"><div class="hour-bar-slot" v-for="row in todayChart.rows" :key="row.hour" :title="row.label+' · '+heatValue(todayChart.kind,row.value)+' '+todayChart.unit"><span class="hour-bar" :class="{'has-value':row.value>0,current:row.hour===todayChart.currentHour,future:row.hour>todayChart.currentHour}" :style="{height:hourBarHeight(row.value,todayChart.max)}"></span></div></div><div class="hour-chart-empty" v-if="!todayChart.max"><span>今天暂无{{todayChart.label}}数据</span></div></div></div>
+        <div class="hour-chart-canvas"><div class="hour-y-axis"><span>{{todayChart.maxLabel}}</span><span>{{heatValue(todayChart.kind,todayChart.max/2)}}</span><span>0</span></div><div class="hour-plot"><div class="hour-grid"><span></span><span></span><span></span></div><svg class="hour-line" viewBox="0 0 1000 168" preserveAspectRatio="none" v-if="todayChart.max"><polygon class="hour-area" :points="hourLine.area"/><polyline class="hour-poly" :points="hourLine.points"/></svg><div class="hour-hover"><span v-for="row in todayChart.rows" :key="'ht-'+row.hour" :class="{future:row.hour>todayChart.currentHour}" :title="row.label+' · '+heatValue(todayChart.kind,row.value)+' '+todayChart.unit"></span></div><div class="hour-chart-empty" v-if="!todayChart.max"><span>今天暂无{{todayChart.label}}数据</span></div></div></div>
         <div class="hour-x-axis"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>23:00</span></div>
       </div>
     </section>
 
-    <div class="dash-grid wide" v-if="credit">
+    <div class="card" v-if="!credit">
+      <div class="card-h">官方额度概览<span class="sub">{{cld?'正在读取上游额度，不挡住图表':'未加载'}}</span></div>
+      <div class="card-p"><div class="load" style="padding:18px"><div class="spin"></div></div></div>
+    </div>
+    <div class="dash-grid wide" v-else>
       <div class="card">
         <div class="card-h">官方额度概览<span class="sub">{{credit.ok_accounts}}/{{credit.active_accounts}} 账号已读取 · 缓存 {{credit.stale_accounts}}</span></div>
         <div class="card-p">
@@ -541,24 +620,29 @@ createApp({
         <div class="empty" v-else>暂无趋势数据</div>
       </div>
       <div class="card">
-        <div class="card-h">快速接入<span class="sub">OpenAI Compatible</span></div>
-        <div class="card-p quick">
-          <div class="quick-row"><div class="qk">Base URL</div><div class="qv">http://127.0.0.1:8787/v1</div><button class="btn s" @click="copy('http://127.0.0.1:8787/v1','base')">{{copied==='base'?'已复制':'复制'}}</button></div>
-          <div class="quick-row"><div class="qk">Models</div><div class="qv">auto, glm-5.2, kimi-k2.7, deepseek-v4-pro</div><button class="btn s" @click="copy('auto','model')">{{copied==='model'?'已复制':'复制'}}</button></div>
-          <div class="quick-row"><div class="qk">Auth</div><div class="qv">Authorization: Bearer sk-cb-...</div><span class="tag">API Keys</span></div>
-          <div class="codeblk" style="margin-top:2px"><span class="k">curl</span> http://127.0.0.1:8787/v1/chat/completions \\
-  -H <span class="s">"Authorization: Bearer YOUR_KEY"</span> \\
-  -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></div>
+        <div class="card-h">今日质量<span class="sub">成功 / 错误 / 过滤</span></div>
+        <div class="card-p donut-split" v-if="qualityPie.total">
+          <div class="donut" :style="qualityPie.style" :aria-label="'成功 '+qualityPie.slices[0].pct.toFixed(0)+'%'"><div class="donut-hole"><div class="v">{{pct(s.today?.success_rate)}}</div><div class="k">成功率</div></div></div>
+          <div class="pie-legend">
+            <div class="pie-leg" v-for="slice in qualityPie.slices" :key="slice.k"><span class="pie-swatch" :style="{background:slice.color}"></span><span class="pie-name">{{slice.label}}</span><span class="pie-val">{{n(slice.value)}} · {{slice.pct.toFixed(0)}}%</span></div>
+          </div>
         </div>
+        <div class="empty" v-else>今天还没有请求结果</div>
       </div>
     </div>
 
     <div class="dash-grid">
       <div class="card">
-        <div class="card-h">模型排行<span class="sub">按请求数</span></div>
-        <div class="card-p rank-list" v-if="s.model_stats?.length">
+        <div class="card-h">模型占比<span class="sub">按请求数</span></div>
+        <div class="card-p donut-split" v-if="modelPie.total">
+          <div class="donut" :style="modelPie.style"><div class="donut-hole"><div class="v">{{n(modelPie.total)}}</div><div class="k">请求</div></div></div>
+          <div class="pie-legend">
+            <div class="pie-leg" v-for="slice in modelPie.slices" :key="slice.label"><span class="pie-swatch" :style="{background:slice.color}"></span><span class="pie-name" :title="slice.label">{{slice.label}}</span><span class="pie-val">{{n(slice.value)}} · {{slice.pct.toFixed(0)}}%</span></div>
+          </div>
+        </div>
+        <div class="card-p rank-list" v-if="s.model_stats?.length" style="padding-top:0">
           <div class="rank-item" v-for="m in s.model_stats" :key="m.model">
-            <div><div class="rank-name"><code>{{m.model}}</code></div><div class="rank-meta">{{tok(m.tokens)}} tokens · {{money(m.credit)}} credit · {{ms(m.avg_duration_ms)}}</div><div class="progress" style="margin-top:7px"><span :style="{width:modelPct(m)}"></span></div></div>
+            <div><div class="rank-name"><code>{{m.model}}</code></div><div class="rank-meta">{{tok(m.tokens)}} tokens · {{money(m.credit)}} credit · {{ms(m.avg_duration_ms)}}</div></div>
             <div class="rank-value">{{n(m.count)}} req</div>
           </div>
         </div>
@@ -582,14 +666,14 @@ createApp({
         <div class="empty" v-else>暂无 Key 使用记录</div>
       </div>
       <div class="card">
-        <div class="card-h">今日质量<span class="sub">请求结果</span></div>
-        <div class="card-p">
-          <div class="metric-row">
-            <div class="metric"><div class="m-label">成功</div><div class="m-value">{{n(s.today?.success)}}</div><div class="m-sub">{{pct(s.today?.success_rate)}}</div></div>
-            <div class="metric"><div class="m-label">错误</div><div class="m-value">{{n(s.today?.errors)}}</div><div class="m-sub">HTTP / upstream</div></div>
-            <div class="metric"><div class="m-label">过滤</div><div class="m-value">{{n(s.today?.filtered)}}</div><div class="m-sub">content_filter</div></div>
-          </div>
-          <div class="progress ok" style="margin-top:14px"><span :style="{width:rateWidth(s.today?.success_rate)}"></span></div>
+        <div class="card-h">快速接入<span class="sub">OpenAI Compatible</span></div>
+        <div class="card-p quick">
+          <div class="quick-row"><div class="qk">Base URL</div><div class="qv">http://127.0.0.1:8787/v1</div><button class="btn s" @click="copy('http://127.0.0.1:8787/v1','base')">{{copied==='base'?'已复制':'复制'}}</button></div>
+          <div class="quick-row"><div class="qk">Models</div><div class="qv">auto, glm-5.2, kimi-k2.7, deepseek-v4-pro</div><button class="btn s" @click="copy('auto','model')">{{copied==='model'?'已复制':'复制'}}</button></div>
+          <div class="quick-row"><div class="qk">Auth</div><div class="qv">Authorization: Bearer sk-cb-...</div><span class="tag">API Keys</span></div>
+          <div class="codeblk" style="margin-top:2px"><span class="k">curl</span> http://127.0.0.1:8787/v1/chat/completions \\
+  -H <span class="s">"Authorization: Bearer YOUR_KEY"</span> \\
+  -d <span class="s">'{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</span></div>
         </div>
       </div>
     </div>
