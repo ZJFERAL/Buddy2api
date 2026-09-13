@@ -212,6 +212,8 @@ def test_admin_models_page_has_one_click_control():
     assert "submitAdd" in html
     assert "aliasChannel" in html
     assert "别名映射" in html
+    assert "编辑模型" not in html
+    assert "editingModels" not in html
 
 
 def test_account_test_ui_lets_user_pick_model():
@@ -398,18 +400,25 @@ def test_manual_add_goes_to_selected_channel(isolated_db, all_channels):
     snap = {item["channel"]: item for item in catalog.catalog_snapshot()["sources"]}
     qw_manual = [item for item in snap["qwenwork"]["models"] if item.get("id") == custom_qw]
     assert qw_manual and qw_manual[0].get("manual") is True
+    wb_manual = [item for item in snap["workbuddy"]["models"] if item.get("id") == custom_wb]
+    assert wb_manual and wb_manual[0].get("manual") is True
 
     catalog.remove_model("qwenwork", custom_qw)
     assert not qwenwork.accepts_model(custom_qw)
+    catalog.remove_model("workbuddy", custom_wb)
+    assert not workbuddy.accepts_model(custom_wb)
 
 
 def test_manual_extra_survives_live_refresh(isolated_db, all_channels, monkeypatch):
     import catalog
 
     extra = "qclaw-hand-added"
+    wb_extra = "wb-hand-added"
     catalog.upsert_model("qclaw", extra, "Hand added")
+    catalog.upsert_model("workbuddy", wb_extra, "WB hand added")
     assert extra not in _ids(QCLAW_STATIC)
     assert providers.get_provider("qclaw").accepts_model(extra)
+    assert providers.get_provider("workbuddy").accepts_model(wb_extra)
 
     _seed_live_accounts()
     _install_supplier_http(monkeypatch)
@@ -423,6 +432,10 @@ def test_manual_extra_survives_live_refresh(isolated_db, all_channels, monkeypat
     assert providers.get_provider("qclaw").accepts_model(extra)
     assert providers.get_provider("qclaw").accepts_model(QCLAW_NEW_ID)
     assert extra not in _ids(providers.get_provider("workbuddy").list_models())
+    assert sources["workbuddy"]["mode"] == "live"
+    assert wb_extra in _ids(sources["workbuddy"]["models"])
+    assert WB_NEW_ID in _ids(sources["workbuddy"]["models"])
+    assert providers.get_provider("workbuddy").accepts_model(wb_extra)
 
 
 def test_manual_add_rejects_unknown_channel(isolated_db, all_channels):
@@ -434,3 +447,7 @@ def test_manual_add_rejects_unknown_channel(isolated_db, all_channels):
         catalog.upsert_model("qwenwork", "")
     with pytest.raises(catalog.CatalogError):
         catalog.upsert_model("qwenwork", "qwork-advanced")
+    with pytest.raises(catalog.CatalogError):
+        catalog.upsert_model("workbuddy", "glm-5.2")
+    with pytest.raises(catalog.CatalogError):
+        catalog.remove_model("workbuddy", "glm-5.2")

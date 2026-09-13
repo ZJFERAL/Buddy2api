@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Optional
 
 import auth_manager
-import database as db
 import proxy
 from providers.protocol import ChannelId
 
@@ -17,13 +15,9 @@ class WorkBuddyProvider:
     checkin_supported = True
 
     def list_models(self) -> list[dict]:
-        try:
-            models = db.get_setting("models", proxy.DEFAULT_MODELS)
-        except sqlite3.OperationalError:
-            return list(proxy.DEFAULT_MODELS)
-        if isinstance(models, list) and models:
-            return models
-        return list(proxy.DEFAULT_MODELS)
+        import catalog
+
+        return catalog.models_for(self.id, catalog.workbuddy_fallback_models())
 
     def alias_map(self) -> dict[str, str]:
         import aliases

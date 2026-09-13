@@ -1,8 +1,8 @@
 """Per-channel supplier model catalogs.
 
 Fetch+parse of each source's list is separate from persist and from chat I/O.
-WorkBuddy live list is also written to the legacy `models` setting so chat
-and the admin editor keep using the same catalog.
+Live WorkBuddy lists are also copied to the legacy `models` setting so older
+readers stay in sync. Manual extras work the same way on every channel.
 """
 
 from __future__ import annotations
@@ -147,36 +147,8 @@ def upsert_model(channel: str, model_id: str, name: str = "") -> dict:
     current = current_models(channel)
     extra_ids = {str(item.get("id")) for item in extras_for(channel)}
     current_ids = {str(item.get("id")) for item in current if isinstance(item, dict)}
-    if mid in current_ids and (channel == "workbuddy" or mid not in extra_ids):
-        if channel == "workbuddy":
-            models = []
-            for item in current:
-                row = dict(item) if isinstance(item, dict) else {"id": str(item), "name": str(item)}
-                if str(row.get("id")) == mid:
-                    row["name"] = label
-                models.append(row)
-            db.set_setting("models", models)
-            return {
-                "channel": channel,
-                "id": mid,
-                "name": label,
-                "count": len(models),
-                "models": models,
-                "updated": True,
-            }
+    if mid in current_ids and mid not in extra_ids:
         raise CatalogError("model already exists in this channel")
-    if channel == "workbuddy":
-        models = [dict(item) if isinstance(item, dict) else {"id": str(item), "name": str(item)} for item in current]
-        models.append({"id": mid, "name": label})
-        db.set_setting("models", models)
-        return {
-            "channel": channel,
-            "id": mid,
-            "name": label,
-            "count": len(models),
-            "models": models,
-            "updated": False,
-        }
     extras = extras_for(channel)
     found = False
     for item in extras:
@@ -203,17 +175,6 @@ def remove_model(channel: str, model_id: str) -> dict:
     mid = _normalize_model_id(channel, model_id)
     if not mid:
         raise CatalogError("model id is required")
-    if channel == "workbuddy":
-        current = workbuddy_fallback_models()
-        models = [
-            item
-            for item in current
-            if str((item.get("id") if isinstance(item, dict) else item) or "") != mid
-        ]
-        if len(models) == len(current):
-            raise CatalogError("model not found")
-        db.set_setting("models", models)
-        return {"channel": channel, "id": mid, "count": len(models), "models": models}
     extras = extras_for(channel)
     kept = [item for item in extras if item.get("id") != mid]
     if len(kept) == len(extras):
@@ -393,10 +354,10 @@ def catalog_snapshot() -> dict:
     sources = []
     for channel in providers.enabled_provider_ids():
         provider = providers.get_provider(channel)
-        if channel == "workbuddy":
-            models = workbuddy_fallback_models()
-        elif provider is not None:
+        if provider is not None:
             models = list(provider.list_models())
+        elif channel == "workbuddy":
+            models = workbuddy_fallback_models()
         else:
             models = []
         meta = refresh.get(channel) if isinstance(refresh.get(channel), dict) else {}
