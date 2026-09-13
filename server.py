@@ -233,7 +233,7 @@ def _check_model_access(api_key_info: dict | None, original: str, inner: str, ch
     provider = providers.get_provider(channel)
     translated = provider.translate_model(inner) if provider else inner
     allowed = set(api_key_info["allowed_models"])
-    candidates = {original, inner, translated, f"{channel}/{inner}"}
+    candidates = {original, inner, translated, f"{channel}/{inner}", f"{channel}/{translated}"}
     if allowed.isdisjoint(candidates):
         raise HTTPException(
             status_code=403,
@@ -1219,7 +1219,9 @@ async def admin_codex_status(authorization: str | None = Header(default=None)):
 @app.get("/admin/aliases")
 async def admin_get_aliases(authorization: str | None = Header(default=None)):
     _check_admin(authorization)
-    return proxy.get_all_aliases()
+    import aliases
+
+    return aliases.snapshot()
 
 
 @app.put("/admin/aliases")
@@ -1228,12 +1230,13 @@ async def admin_update_aliases(
     authorization: str | None = Header(default=None),
 ):
     _check_admin(authorization)
+    import aliases
+
     data = await _read_json_object(request)
-    if not all(isinstance(key, str) and isinstance(value, str) for key, value in data.items()):
-        raise HTTPException(status_code=400, detail="Aliases must map string names to string model IDs")
-    # Only store user-defined aliases (not built-in ones)
-    user_aliases = {k: v for k, v in data.items() if k not in proxy._BUILTIN_ALIASES}
-    db.set_setting("model_aliases", user_aliases)
+    try:
+        aliases.save_user_aliases(data)
+    except aliases.AliasError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok"}
 
 

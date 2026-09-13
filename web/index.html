@@ -147,7 +147,7 @@ badge,.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;bord
 .detect-box h4{font-size:11px;color:var(--fg3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px}
 .detect-path{display:flex;align-items:center;gap:8px;min-width:0;margin-top:7px}
 .detect-path code{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.detect-custom{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center}
+.detect-custom{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center}
 .detect-custom input{width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:4px;font:inherit;font-size:13px;outline:none;background:var(--input)}
 .detect-custom input:focus{border-color:var(--blue);background:#fff}
 .detect-files{margin-top:12px;overflow-x:auto}
@@ -376,28 +376,28 @@ const api={
 function apiErr(e,fallback='加载失败'){return e.message==='401'?'管理凭证无效，请在设置页填写配置的 Admin Token。':e.message==='403'?'请求来源不被允许，请使用网关的本机地址打开。':fallback}
 createApp({
   setup(){
-    const validPages=['dashboard','accounts','keys','models','logs','settings'];
+    const validPages=['accounts','dashboard','keys','models','logs','settings'];
     const savedPage=localStorage.getItem('cb_gw_page');
-    const page=ref(validPages.includes(savedPage)?savedPage:'dashboard'),token=ref(localStorage.getItem('cb_gw_token')||''),toasts=ref([]);
+    const page=ref(validPages.includes(savedPage)?savedPage:'accounts'),token=ref(localStorage.getItem('cb_gw_token')||''),toasts=ref([]);
     function tf(m,t='ok'){const id=Date.now()+Math.random();toasts.value=[...toasts.value,{id,m,t}].slice(-4);setTimeout(()=>toasts.value=toasts.value.filter(x=>x.id!==id),2500)}
     function go(k){page.value=k;localStorage.setItem('cb_gw_page',k)}
     function saveToken(value){token.value=value.trim();if(token.value)localStorage.setItem('cb_gw_token',token.value);else localStorage.removeItem('cb_gw_token');tf(token.value?'备用 Admin Token 已保存':'备用 Admin Token 已清除')}
     function hardRefresh(){window.location.reload()}
-    const nav=[{k:'dashboard',l:'Dashboard',i:I.dash},{k:'accounts',l:'账号管理',i:I.users},{k:'keys',l:'API Keys',i:I.key},{k:'models',l:'模型配置',i:I.cpu},{k:'logs',l:'请求日志',i:I.log},{k:'settings',l:'设置',i:I.gear}];
+    const nav=[{k:'accounts',l:'账号管理',i:I.users},{k:'dashboard',l:'Dashboard',i:I.dash},{k:'keys',l:'API Keys',i:I.key},{k:'models',l:'模型配置',i:I.cpu},{k:'logs',l:'请求日志',i:I.log},{k:'settings',l:'设置',i:I.gear}];
     return{page,token,toasts,tf,go,saveToken,hardRefresh,nav,I}
   },
   template:`
   <div class="layout">
     <header class="topbar">
-      <div class="brand-block"><div class="brand-symbol">B2</div><div class="brand-copy"><div class="brand-title">Buddy 2 API</div><div class="brand-meta">Local model gateway · v2.1.6</div></div></div>
+      <div class="brand-block"><div class="brand-symbol">B2</div><div class="brand-copy"><div class="brand-title">Buddy 2 API</div><div class="brand-meta">Local model gateway · v2.1.7</div></div></div>
       <nav class="topnav"><div v-for="n in nav" :key="n.k" class="nav-item" :class="{on:page===n.k}" @click="go(n.k)" v-html="n.i+'<span>'+n.l+'</span>'"></div></nav>
       <div class="top-actions">
         <button class="refresh-cta" @click="hardRefresh"><span v-html="I.refresh"></span><span>刷新</span></button>
       </div>
     </header>
     <div class="main">
-      <div class="content" v-if="page==='dashboard'"><dash :token="token" :toast="tf"/></div>
       <div class="content" v-if="page==='accounts'"><accs :token="token" :toast="tf"/></div>
+      <div class="content" v-if="page==='dashboard'"><dash :token="token" :toast="tf"/></div>
       <div class="content" v-if="page==='keys'"><keys :token="token" :toast="tf"/></div>
       <div class="content" v-if="page==='models'"><mdls :token="token" :toast="tf"/></div>
       <div class="content" v-if="page==='logs'"><lgs :token="token"/></div>
@@ -604,7 +604,7 @@ createApp({
   </template>
 </div>`
 }).component('accs',{props:['token','toast'],setup(p){
-  const l=ref([]),ld=ref(true),sa=ref(false),ai=ref(''),nm=ref(''),disc=ref(null),dl=ref(false),scanning=ref(false),adding=ref(false),authPath=ref(''),test=ref(null),claim=ref(null),pkg=ref(null),tl=ref(0),claimingAll=ref(false),officialRefreshing=ref(false),checkins=ref({}),checkinSummary=ref(null),checkinLoading=ref(false),busy=ref({}),discChannel=ref('workbuddy'),channels=ref([{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}]),catalogs=ref({});
+  const l=ref([]),ld=ref(true),sa=ref(false),ai=ref(''),nm=ref(''),disc=ref(null),dl=ref(false),scanning=ref(false),adding=ref(false),authPath=ref(''),test=ref(null),claim=ref(null),pkg=ref(null),tl=ref(0),claimingAll=ref(false),officialRefreshing=ref(false),checkins=ref({}),checkinSummary=ref(null),checkinLoading=ref(false),busy=ref({}),discChannel=ref('workbuddy'),channels=ref([{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}]),catalogs=ref({}),importSummary=ref([]);
   const filters=reactive({q:'',status:'all',claim:'all',sort:'priority'});
   function hydrate(a){return {...a,_weight:a.weight||1,_priority:a.priority||0,_creditSnapshot:a.credit_snapshot||a.credit_limit||0,_baseWeight:a.weight||1,_basePriority:a.priority||0,_baseCreditSnapshot:a.credit_snapshot||a.credit_limit||0}}
   function dirty(a){return Number(a._weight||1)!==Number(a._baseWeight||1)||Number(a._priority||0)!==Number(a._basePriority||0)||Number(a._creditSnapshot||0)!==Number(a._baseCreditSnapshot||0)}
@@ -615,8 +615,26 @@ createApp({
   async function loadCheckins(force=false){checkinLoading.value=true;try{const r=await api.get('/admin/accounts/checkin-status-all'+(force?'?force=1':''),p.token);checkinSummary.value=r;const map={};(r.results||[]).forEach(x=>{map[x.account_id]=x});checkins.value=map}catch(e){if(force)p.toast(apiErr(e,'签到状态加载失败'),'err')}checkinLoading.value=false}
   async function loadChannels(){try{const ch=await api.get('/admin/channels',p.token);if(ch.channels?.length)channels.value=ch.channels}catch(e){}}
   async function discover(path=''){dl.value=true;try{const qs=new URLSearchParams();if(path&&path.trim())qs.set('auth_dir',path.trim());if(discChannel.value)qs.set('channel',discChannel.value);const q=qs.toString();disc.value=await api.get('/admin/accounts/discover'+(q?'?'+q:''),p.token)}catch(e){p.toast(apiErr(e,'检测失败'),'err')}dl.value=false}
-  async function scan(path=''){if(scanning.value)return;scanning.value=true;try{if(disc.value?.preview_token){const body={channel:disc.value.channel||'workbuddy',preview_token:disc.value.preview_token};if(path&&path.trim())body.auth_dir=path.trim();const r=await api.post('/admin/accounts/import',body,p.token);p.toast('导入 '+r.imported+' · 更新 '+r.updated+' · 跳过 '+r.skipped)}else{const body=path&&path.trim()?{auth_dir:path.trim()}:{};const r=await api.post('/admin/accounts/scan',body,p.token);p.toast('导入 '+r.imported+' · 更新 '+r.updated+' · 跳过 '+r.skipped)}await load();await discover(path)}catch(e){p.toast(apiErr(e,'扫描失败'),'err')}scanning.value=false}
-  async function scanCustom(){const path=authPath.value.trim();if(!path){p.toast('请先填写目录或 .info 文件路径','err');return}await scan(path)}
+  async function importDetected(channel,path=''){
+    const qs=new URLSearchParams({channel});if(path.trim())qs.set('auth_dir',path.trim());
+    const preview=await api.get('/admin/accounts/discover?'+qs,p.token);
+    if(!preview.valid_count)return {imported:0,updated:0,skipped:0,empty:true};
+    const body={channel,preview_token:preview.preview_token};if(path.trim())body.auth_dir=path.trim();
+    return await api.post('/admin/accounts/import',body,p.token);
+  }
+  async function scan(all=false){
+    if(scanning.value)return;scanning.value=true;
+    const targets=all?[...channels.value]:channels.value.filter(c=>c.id===discChannel.value);
+    const path=all?'':authPath.value.trim();const results=[];
+    try{
+      for(const c of targets){
+        const label=c.display_name||c.id;
+        try{const r=await importDetected(c.id,path);results.push(label+'：'+(r.empty?'未检测到有效登录':'导入 '+r.imported+' / 更新 '+r.updated+' / 跳过 '+r.skipped))}
+        catch(e){results.push(label+'：导入失败');p.toast(label+'：'+apiErr(e,'导入失败'),'err')}
+      }
+      importSummary.value=results;await load();await discover(authPath.value);
+    }finally{scanning.value=false}
+  }
   async function add(){if(adding.value)return;if(!ai.value.trim()){p.toast('请先粘贴 Auth JSON','err');return}adding.value=true;try{const d=JSON.parse(ai.value);await api.post('/admin/accounts',{...d,name:nm.value,provider:d.provider||d.channel||discChannel.value},p.token);p.toast('添加成功');sa.value=false;ai.value='';nm.value='';await load();await discover(authPath.value)}catch(e){p.toast('失败:'+e.message,'err')}adding.value=false}
   async function withBusy(a,k,fn){busy.value={...busy.value,[a.id+'-'+k]:true};try{return await fn()}finally{const o={...busy.value};delete o[a.id+'-'+k];busy.value=o}}
   async function refreshResource(a,silent=false,force=false){return await withBusy(a,'resource',async()=>{try{const r=await api.get('/admin/accounts/'+a.id+'/resources'+(force?'?force=1':''),p.token);mergeResource(a,r);if(!silent)p.toast(r.ok?(r.stale?'已显示旧额度缓存':'官方额度已刷新'):('官方额度失败：'+(r.message||r.status_code)),r.ok?'ok':'err');return r}catch(e){const r={ok:false,account_id:a.id,message:apiErr(e,'官方额度加载失败'),packages:[]};mergeResource(a,r);if(!silent)p.toast(r.message,'err');return r}})}
@@ -681,7 +699,7 @@ createApp({
   function expireText(x){if(x.expired)return '已过期';if(x.days_to_expire===null||x.days_to_expire===undefined)return x.expire_time||'长期';if(x.days_to_expire<0)return '已过期';if(x.days_to_expire<=7)return x.days_to_expire+' 天内';return shortTime(x.expire_time)}
   function pkgBadge(x){if(x.expired)return 'err';if(Number(x.days_to_expire)>=0&&Number(x.days_to_expire)<=7)return 'inactive';return 'ok'}
   function clearPath(){authPath.value='';discover('')}
-  onMounted(()=>{loadChannels();loadCatalogs();load(true);discover()});return{l,visibleAccounts,filters,ld,sa,ai,nm,disc,dl,scanning,adding,authPath,test,testModels,claim,pkg,tl,claimingAll,officialRefreshing,checkins,checkinSummary,checkinLoading,busyKey,dirty,load,loadCheckins,discover,scan,scanCustom,add,ref2,saveMeta,toggle,openTest,closeTest,runTest,claimOne,claimAll,refreshAllResources,openPackages,refreshPackages,del,fmt,size,credit,tok,creditPct,claimText,officialBalance,officialHasValue,officialMain,officialMeta,cacheAge,officialWarn,checkinClass,checkinText,tokenLife,shortTime,expireText,pkgBadge,clearPath,I,discChannel,channels}
+  onMounted(()=>{loadChannels();loadCatalogs();load(true);discover()});return{l,visibleAccounts,filters,ld,sa,ai,nm,disc,dl,scanning,adding,authPath,test,testModels,claim,pkg,tl,claimingAll,officialRefreshing,checkins,checkinSummary,checkinLoading,busyKey,dirty,load,loadCheckins,discover,scan,importSummary,add,ref2,saveMeta,toggle,openTest,closeTest,runTest,claimOne,claimAll,refreshAllResources,openPackages,refreshPackages,del,fmt,size,credit,tok,creditPct,claimText,officialBalance,officialHasValue,officialMain,officialMeta,cacheAge,officialWarn,checkinClass,checkinText,tokenLife,shortTime,expireText,pkgBadge,clearPath,I,discChannel,channels}
 },template:`
 <div>
   <div class="phead"><h1>账号管理</h1><p>粘性主账号 · 失败自动切换</p></div>
@@ -692,14 +710,16 @@ createApp({
         <div>
           <div class="detect-title" v-if="disc">检测到 {{disc.file_count}} 个登录文件，其中 {{disc.valid_count}} 个有效</div>
           <div class="detect-title" v-else>正在检测本机登录文件</div>
-          <div class="hint">三个通道默认都能选。先选通道再检测导入；没登录的通道检测为空。启动默认不再自动入库。已导入账号默认只更新 token，不改权重/优先级。</div>
+          <div class="hint">全部导入会读取各启用通道的默认目录；当前通道导入可使用自定义路径。未登录的通道会跳过，已有账号保留权重和优先级。</div>
         </div>
         <div class="detect-actions">
-          <select class="selectctl" v-model="discChannel" @change="discover(authPath)"><option v-for="c in channels" :key="c.id" :value="c.id">{{c.display_name||c.id}}</option></select>
-          <button class="btn s pri" @click="scan('')" :disabled="dl||scanning||!disc?.valid_count"><span v-html="I.scan"></span>{{scanning?'导入中':'一键导入本机登录'}}</button>
-          <button class="btn s" @click="discover('')" :disabled="dl"><span v-html="I.refresh"></span>重新检测</button>
+          <select class="selectctl" v-model="discChannel" @change="clearPath" :disabled="dl||scanning"><option v-for="c in channels" :key="c.id" :value="c.id">{{c.display_name||c.id}}</option></select>
+          <button class="btn s pri" @click="scan(true)" :disabled="dl||scanning"><span v-html="I.scan"></span>{{scanning?'导入中':'一键导入全部通道'}}</button>
+          <button class="btn s" @click="scan(false)" :disabled="dl||scanning">导入当前通道</button>
+          <button class="btn s" @click="discover(authPath)" :disabled="dl||scanning"><span v-html="I.refresh"></span>重新检测</button>
         </div>
       </div>
+      <div class="callout" v-if="importSummary.length" style="margin-bottom:12px"><div v-for="line in importSummary" :key="line">{{line}}</div></div>
       <div class="callout" v-if="disc?.runtime?.host_auth_limited" style="margin-bottom:12px">当前是 Linux Docker。QClaw / 千问办公的 Windows 登录文件在容器里解不开。这两家请在本机用 <span class="mono">python server.py</span> 启动后再检测导入。WorkBuddy 可以继续用这个容器。</div>
       <div class="callout" v-else-if="disc?.runtime?.container && !disc.runtime.auth_mount_exists" style="margin-bottom:12px">当前运行在 Docker 容器内，容器不能直接扫描 Windows 的 C 盘。Windows Docker 推荐用 <span class="mono">.\start-docker-win.ps1</span> 启动，它会自动把默认登录目录只读挂载到 <span class="mono">/auth</span>。</div>
       <div v-if="dl" class="load" style="padding:18px"><div class="spin"></div></div>
@@ -718,12 +738,11 @@ createApp({
           <div class="detect-box">
             <h4>自定义路径</h4>
             <div class="detect-custom">
-              <input v-model="authPath" placeholder="auth 目录或 workbuddy-desktop.info 完整路径"/>
-              <button class="btn s" @click="discover(authPath)" :disabled="dl">检测</button>
-              <button class="btn s pri" @click="scanCustom" :disabled="dl||scanning">{{scanning?'导入中':'导入'}}</button>
-              <button class="btn s" @click="clearPath" :disabled="dl">清空</button>
+              <input v-model="authPath" placeholder="可选：当前通道的登录目录或文件路径" :disabled="scanning"/>
+              <button class="btn s" @click="discover(authPath)" :disabled="dl||scanning">检测</button>
+              <button class="btn s" @click="clearPath" :disabled="dl||scanning">清空</button>
             </div>
-            <div class="hint">可以直接粘贴 <span class="mono">C:/Users/.../auth</span> 或某个 <span class="mono">.info</span> 文件路径。</div>
+            <div class="hint">留空使用默认目录；填写后点击上方“导入当前通道”。切换通道会清空路径。</div>
           </div>
         </div>
         <div class="detect-files">
@@ -833,16 +852,46 @@ createApp({
   </div><div class="modal-f"><button class="btn" @click="close">{{res?'关闭':'取消'}}</button><button class="btn pri" @click="create" v-if="!res" :disabled="saving">{{saving?'创建中':'创建'}}</button></div></div></div>
 </div>`
 }).component('mdls',{props:['token','toast'],setup(p){
-  const m=ref([]),al=ref({}),ld=ref(true),sources=ref([]),syncing=ref(false),adding=ref(false),addOpen=ref(false);
+  const m=ref([]),al=ref({}),builtinKeys=ref({}),aliasChannel=ref('workbuddy'),ld=ref(true),sources=ref([]),syncing=ref(false),adding=ref(false),addOpen=ref(false);
   const FALLBACK_CH=[{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}];
   const addForm=reactive({channel:'workbuddy',id:'',name:''});
-  const BUILTIN=['gpt-4o','gpt-4o-mini','gpt-4-turbo','gpt-4','gpt-3.5-turbo','claude-3.5-sonnet','claude-3-haiku','deepseek-chat','deepseek-coder','moonshot-v1-128k','moonshot-v1-32k'];
-  const newKey=ref(''),newVal=ref('');
+  const newKey=ref(''),newVal=ref(''),editingModels=ref(false);
   const channels=computed(()=>sources.value.length?sources.value.map(s=>({id:s.channel,display_name:s.display_name||s.channel})):FALLBACK_CH);
-  async function load(){ld.value=true;try{m.value=await api.get('/admin/models',p.token);al.value=await api.get('/admin/aliases',p.token);try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){sources.value=[]}}catch(e){p.toast('失败','err')}ld.value=false}
+  function applyAliasSnapshot(snap){
+    const maps={}, keys={};
+    (snap&&snap.sources||[]).forEach(s=>{maps[s.channel]=s.aliases||{};keys[s.channel]=s.builtin_keys||[]});
+    al.value=maps;builtinKeys.value=keys;
+    if(!maps[aliasChannel.value]&&channels.value.length)aliasChannel.value=channels.value[0].id;
+  }
+  async function load(){ld.value=true;try{m.value=await api.get('/admin/models',p.token);try{applyAliasSnapshot(await api.get('/admin/aliases',p.token))}catch(e){al.value={};builtinKeys.value={}}try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){sources.value=[]}}catch(e){p.toast('失败','err')}ld.value=false}
   async function refreshCatalogs(){try{const snap=await api.get('/admin/models/catalogs',p.token);sources.value=snap.sources||[]}catch(e){}}
-  async function save(){try{await api.put('/admin/models',m.value,p.token);await api.put('/admin/aliases',al.value,p.token);p.toast('已保存')}catch(e){p.toast('失败','err')}}
-  async function syncSources(){if(syncing.value)return;syncing.value=true;try{const r=await api.post('/admin/models/refresh',{},p.token);sources.value=r.sources||[];p.toast('已读取各通道供应模型');try{m.value=await api.get('/admin/models',p.token)}catch(e){}}catch(e){p.toast(apiErr(e,'读取供应模型失败'),'err')}syncing.value=false}
+  async function save(){
+    try{
+      await api.put('/admin/models',m.value,p.token);
+      const body={};
+      for(const c of channels.value){
+        const skip=new Set(builtinKeys.value[c.id]||[]);
+        const map=al.value[c.id]||{};
+        body[c.id]=Object.fromEntries(Object.entries(map).filter(([k])=>!skip.has(k)));
+      }
+      await api.put('/admin/aliases',body,p.token);
+      p.toast('已保存');
+      try{applyAliasSnapshot(await api.get('/admin/aliases',p.token))}catch(e){}
+    }catch(e){p.toast('失败','err')}
+  }
+  async function syncSources(){
+    if(syncing.value)return;syncing.value=true;
+    try{
+      const r=await api.post('/admin/models/refresh',{},p.token);
+      sources.value=r.sources||[];
+      const wb=sources.value.find(s=>s.channel==='workbuddy');
+      if(wb)m.value=(wb.models||[]).map(x=>({...x}));
+      const live=sources.value.filter(s=>s.mode==='live').length;
+      const fallback=sources.value.length-live;
+      p.toast('模型列表已更新：'+live+' 个通道在线读取'+(fallback?'，'+fallback+' 个通道使用本地列表':''),live?'ok':'warn');
+    }catch(e){p.toast(apiErr(e,'读取供应模型失败'),'err')}
+    finally{syncing.value=false}
+  }
   function openAdd(){addForm.channel=addForm.channel||'workbuddy';addForm.id='';addForm.name='';addOpen.value=true}
   function closeAdd(){addOpen.value=false}
   async function submitAdd(){
@@ -872,19 +921,25 @@ createApp({
   async function rmExtra(channel,id){
     try{await api.del('/admin/models/catalogs?channel='+encodeURIComponent(channel)+'&model_id='+encodeURIComponent(id),p.token);p.toast('已删除');await refreshCatalogs()}catch(e){p.toast(apiErr(e,'删除失败'),'err')}
   }
-  function isBuiltin(k){return BUILTIN.includes(k)}
+  function isBuiltin(k){return (builtinKeys.value[aliasChannel.value]||[]).includes(k)}
   function addAlias(){
-    const k=newKey.value.trim(),v=newVal.value.trim();
+    const ch=aliasChannel.value,k=newKey.value.trim(),v=newVal.value.trim();
+    if(!ch){p.toast('请选择通道','err');return}
     if(!k||!v){p.toast('请输入别名和目标模型','err');return}
+    if(k.includes('/')){p.toast('别名不要带通道前缀','err');return}
     if(isBuiltin(k)){p.toast('不能覆盖内置别名','err');return}
-    if(al.value[k]){p.toast('别名已存在','err');return}
-    al.value={...al.value,[k]:v};newKey.value='';newVal.value='';p.toast('已添加')
+    const cur=al.value[ch]||{};
+    if(cur[k]){p.toast('该通道已有此别名','err');return}
+    al.value={...al.value,[ch]:{...cur,[k]:v}};newKey.value='';newVal.value='';p.toast('已添加，请点击“保存全部”')
   }
-  function rmAlias(k){const o={...al.value};delete o[k];al.value=o}
+  function rmAlias(k){const ch=aliasChannel.value;const o={...(al.value[ch]||{})};delete o[k];al.value={...al.value,[ch]:o}}
   function modeText(s){return s.mode==='live'?'在线读取':(s.mode==='fallback'?'回退本地':'未读取')}
   function modeClass(s){return s.mode==='live'?'ok':(s.mode==='fallback'?'warn':'')}
-  const otherSources=computed(()=>sources.value.filter(s=>s.channel!=='workbuddy'));
-  onMounted(load);return{m,al,ld,sources,otherSources,syncing,adding,addOpen,addForm,channels,load,save,syncSources,openAdd,closeAdd,submitAdd,rm,rmExtra,newKey,newVal,addAlias,rmAlias,isBuiltin,modeText,modeClass,I}
+  const modelSources=computed(()=>channels.value.map(c=>({...sources.value.find(s=>s.channel===c.id),channel:c.id,display_name:c.display_name,models:c.id==='workbuddy'?m.value:(sources.value.find(s=>s.channel===c.id)?.models||[])})));
+  const aliasRows=computed(()=>al.value[aliasChannel.value]||{});
+  const aliasTargets=computed(()=>{const s=modelSources.value.find(x=>x.channel===aliasChannel.value);return s?s.models:[]});
+  const aliasChannelName=computed(()=>(channels.value.find(c=>c.id===aliasChannel.value)||{}).display_name||aliasChannel.value);
+  onMounted(load);return{m,al,ld,sources,modelSources,editingModels,syncing,adding,addOpen,addForm,channels,load,save,syncSources,openAdd,closeAdd,submitAdd,rm,rmExtra,newKey,newVal,addAlias,rmAlias,isBuiltin,modeText,modeClass,aliasChannel,aliasRows,aliasTargets,aliasChannelName,I}
 },template:`
 <div>
   <div class="phead"><h1>模型配置</h1><p>/v1/models 按通道列出；一键读取各来源供应模型，手动添加时先选通道，名称只挂在该通道</p></div>
@@ -894,10 +949,16 @@ createApp({
     <tr v-for="s in sources" :key="s.channel"><td>{{s.display_name||s.channel}} <span class="tag">{{s.channel}}</span></td><td><span class="badge" :class="modeClass(s)">{{modeText(s)}}</span></td><td>{{s.count||0}}</td><td class="mono" style="color:var(--fg3)">{{s.message||'—'}}</td></tr>
     </tbody></table>
   </div>
-  <div class="card" v-for="s in otherSources" :key="'cat-'+s.channel" style="margin-bottom:12px"><div class="card-h">{{s.display_name||s.channel}}<span class="sub">仅 {{s.channel}}/id ，客户端选错通道会直接拒绝</span></div>
-    <table><thead><tr><th>ID</th><th>名称</th><th></th></tr></thead><tbody>
-    <tr v-for="x in (s.models||[])" :key="s.channel+'-'+x.id"><td class="mono">{{s.channel}}/{{x.id}} <span v-if="x.manual" class="tag" style="margin-left:6px">手动</span></td><td>{{x.name||x.id}}</td><td><button v-if="x.manual" class="btn s danger" @click="rmExtra(s.channel,x.id)">删除</button></td></tr>
-    <tr v-if="!(s.models&&s.models.length)"><td colspan="3" class="empty">暂无</td></tr>
+  <div class="card" v-for="s in modelSources" :key="'cat-'+s.channel" style="margin-bottom:12px">
+    <div class="card-h">{{s.display_name||s.channel}}<span class="sub">{{s.models.length}} 个模型</span><span class="badge" :class="modeClass(s)">{{modeText(s)}}</span><button v-if="s.channel==='workbuddy'" class="btn s" style="margin-left:auto" @click="editingModels=!editingModels">{{editingModels?'结束编辑':'编辑模型'}}</button></div>
+    <div class="hint" style="padding:8px 16px">客户端使用 {{s.channel}}/模型ID{{s.channel==='workbuddy'?'，也支持裸 ID。编辑后点击“保存全部”；在线读取会覆盖手动修改。':'；API Key 需绑定此通道。'}}</div>
+    <table><thead><tr><th>模型 ID</th><th>名称</th><th>操作</th></tr></thead><tbody>
+    <tr v-for="(x,i) in s.models" :key="s.channel+'-'+i">
+      <td class="mono"><input v-if="s.channel==='workbuddy'&&editingModels" v-model="x.id" aria-label="模型 ID"/><template v-else>{{s.channel}}/{{x.id}}</template> <span v-if="x.manual" class="tag">手动</span></td>
+      <td><input v-if="s.channel==='workbuddy'&&editingModels" v-model="x.name" aria-label="模型名称"/><template v-else>{{x.name||x.id}}</template></td>
+      <td><button v-if="s.channel==='workbuddy'&&editingModels" class="btn s danger" @click="rm(i)">删除</button><button v-else-if="s.channel!=='workbuddy'&&x.manual" class="btn s danger" @click="rmExtra(s.channel,x.id)">删除</button><span v-else class="muted">—</span></td>
+    </tr>
+    <tr v-if="!s.models.length"><td colspan="3" class="empty">暂无模型</td></tr>
     </tbody></table>
   </div>
   <div class="ov" v-if="addOpen" @click.self="closeAdd"><div class="modal"><div class="modal-h"><h3>添加模型</h3><button class="x" @click="closeAdd">&times;</button></div><div class="modal-b">
@@ -907,32 +968,30 @@ createApp({
   </div><div class="modal-f"><button class="btn" @click="closeAdd">取消</button><button class="btn pri" @click="submitAdd" :disabled="adding">{{adding?'添加中':'添加'}}</button></div></div></div>
   <div v-if="ld" class="load"><div class="spin"></div></div>
   <template v-else>
-  <div class="card"><div class="card-h">WorkBuddy 模型列表<span class="sub">可手动编辑；无官方 /models 接口时一键操作为回退</span></div>
-    <table><thead><tr><th>ID</th><th>名称</th><th></th></tr></thead><tbody>
-    <tr v-for="(x,i) in m" :key="i"><td><input v-model="x.id" style="width:100%;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px;font-family:var(--mono)"/></td><td><input v-model="x.name" style="width:100%;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px"/></td><td><button class="btn s danger" @click="rm(i)">删除</button></td></tr>
-    <tr v-if="!m.length"><td colspan="3" class="empty">暂无模型</td></tr>
-    </tbody></table>
-  </div>
-  <div class="card"><div class="card-h">别名映射<span class="sub">客户端名称 → 后端模型</span></div>
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border2);display:flex;gap:8px;align-items:center">
-      <input v-model="newKey" placeholder="别名 (如 gpt-4o)" style="flex:1;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px;font-family:var(--mono)"/>
+  <div class="card"><div class="card-h">别名映射<span class="sub">按通道保存，只对该通道的 API Key 生效</span>
+      <select class="selectctl" v-model="aliasChannel" aria-label="别名通道" style="margin-left:auto">
+        <option v-for="c in channels" :key="c.id" :value="c.id">{{c.display_name||c.id}}</option>
+      </select>
+    </div>
+    <div class="hint" style="padding:8px 16px">当前通道 {{aliasChannelName}}。客户端可发裸别名或 {{aliasChannel}}/别名；请使用绑定此通道的 Key。</div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border2);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input v-model="newKey" placeholder="别名 (如 gpt-4o)" style="flex:1;min-width:140px;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px;font-family:var(--mono)"/>
       <span style="color:var(--fg3)">→</span>
-      <input v-model="newVal" placeholder="后端模型 (如 glm-5.2)" style="flex:1;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px;font-family:var(--mono)"/>
+      <input v-model="newVal" list="alias-targets" placeholder="目标模型 ID" style="flex:1;min-width:160px;padding:5px 8px;border:1px solid #e8e8e8;border-radius:4px;font:inherit;font-size:12px;font-family:var(--mono)"/>
+      <datalist id="alias-targets"><option v-for="x in aliasTargets" :key="x.id" :value="x.id">{{x.name&&x.name!==x.id?x.name:x.id}}</option></datalist>
       <button class="btn s pri" @click="addAlias"><span v-html="I.plus"></span>添加</button>
     </div>
-    <table><thead><tr><th>别名（客户端用）</th><th>→ 后端模型 ID</th><th></th></tr></thead><tbody>
-    <tr v-for="(v,k) in al" :key="k"><td class="mono" style="font-weight:600">{{k}} <span v-if="isBuiltin(k)" class="tag" style="margin-left:6px">内置</span></td><td class="mono">{{v}}</td><td><button v-if="!isBuiltin(k)" class="btn s danger" @click="rmAlias(k)">删除</button></td></tr>
-    <tr v-if="!Object.keys(al).length"><td colspan="3" class="empty">暂无自定义别名</td></tr>
+    <table><thead><tr><th>别名（客户端用）</th><th>→ {{aliasChannel}} 模型 ID</th><th></th></tr></thead><tbody>
+    <tr v-for="(v,k) in aliasRows" :key="k"><td class="mono" style="font-weight:600">{{k}} <span v-if="isBuiltin(k)" class="tag" style="margin-left:6px">内置</span></td><td class="mono">{{v}}</td><td><button v-if="!isBuiltin(k)" class="btn s danger" @click="rmAlias(k)">删除</button><span v-else class="muted">—</span></td></tr>
+    <tr v-if="!Object.keys(aliasRows).length"><td colspan="3" class="empty">该通道暂无别名</td></tr>
     </tbody></table>
-    <div style="padding:12px 16px;font-size:12px;color:var(--fg3);border-top:1px solid var(--border2)">
-      内置别名（不可修改）：gpt-4o→glm-5.2, gpt-4o-mini→glm-5.1, claude-3.5-sonnet→deepseek-v4-pro, deepseek-chat→deepseek-v4-pro, moonshot-v1-128k→kimi-k2.7
-    </div>
+    <div style="padding:12px 16px;font-size:12px;color:var(--fg3);border-top:1px solid var(--border2)">内置别名不可删除或覆盖。添加后需点击“保存全部”。</div>
   </div>
   </template>
   <div class="card card-p" style="margin-top:16px"><div style="font-weight:600;font-size:13px;margin-bottom:10px">接入说明</div><div class="codeblk"><span class="k">Base URL</span>: http://127.0.0.1:8787/v1
 <span class="k">API Key</span>:  在 API Keys 页面创建
-<span class="k">Models</span>:   auto, glm-5.2, kimi-k2.7, deepseek-v4-pro
-<span class="k">Aliases</span>:  gpt-4o, gpt-4o-mini, claude-3.5-sonnet（自动映射）
+<span class="k">Models</span>:   按通道使用 channel/模型ID；WorkBuddy 也支持裸 ID
+<span class="k">Aliases</span>:  上方按通道配置，只对应该通道的 Key 生效
 <span class="k">Stream</span>:   建议开启</div></div>
 </div>`
 }).component('lgs',{props:['token'],setup(p){

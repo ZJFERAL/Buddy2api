@@ -14,7 +14,6 @@ import database as db
 from reasoning_controls import resolve_reasoning_control
 from providers.qwenwork import cosy
 from providers.qwenwork.constants import (
-    ALIASES,
     BUILD,
     BUSINESS_PRODUCT,
     BUSINESS_TYPE,
@@ -36,8 +35,10 @@ from providers.qwenwork.token import is_token_expired, refresh_account
 
 
 def translate_model(model: str) -> str:
+    import aliases
+
     inner = (model or "qwork-advanced").strip() or "qwork-advanced"
-    return ALIASES.get(inner, inner)
+    return aliases.resolve(CHANNEL_ID, inner)
 
 
 def chat_url() -> str:

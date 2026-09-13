@@ -12,7 +12,6 @@ from providers.protocol import ChannelId, QuotaSnapshot
 from providers.qwenwork import chat, store
 from providers.qwenwork.constants import (
     ACCOUNT_CONTEXT_PATH,
-    ALIASES,
     CHANNEL_ID,
     DISPLAY_NAME,
     GATEWAY,
@@ -32,11 +31,13 @@ class QwenWorkProvider:
         return catalog.models_for(self.id, [{"id": item} for item in STATIC_MODELS])
 
     def alias_map(self) -> dict[str, str]:
-        return dict(ALIASES)
+        import aliases
+
+        return aliases.merged_map(self.id)
 
     def accepts_model(self, inner: str) -> bool:
         value = (inner or "").strip()
-        if value in ALIASES:
+        if value in self.alias_map():
             return True
         ids = {str(item.get("id")) for item in self.list_models() if isinstance(item, dict)}
         return value in ids

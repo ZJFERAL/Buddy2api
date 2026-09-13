@@ -15,7 +15,6 @@ import database as db
 from providers.traework.constants import (
     AGENT_API,
     AGENT_ID,
-    ALIASES,
     CHANNEL_ID,
     SESSION_MODE,
     SESSIONS_PATH,
@@ -25,15 +24,18 @@ from providers.traework.token import TraeWorkAuthError, auth_headers, is_token_e
 
 
 def translate_model(model: str) -> str:
+    import aliases
+
     inner = (model or "auto").strip() or "auto"
-    return ALIASES.get(inner, inner)
+    return aliases.resolve(CHANNEL_ID, inner)
 
 
 def accepts_model(inner: str) -> bool:
+    import aliases
     import catalog
 
     value = (inner or "").strip()
-    if value in ALIASES:
+    if value in aliases.merged_map(CHANNEL_ID):
         return True
     models = catalog.models_for(CHANNEL_ID, [{"id": item} for item in STATIC_MODELS])
     ids = {str(item.get("id")) for item in models if isinstance(item, dict)}

@@ -81,7 +81,13 @@ async def fetch_supplier_models(account: dict) -> list[dict]:
     headers = auth_headers(account)
     url = f"{AGENT_API}{MODELS_PATH}"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=headers)
+        # Without functions, the endpoint defaults to the legacy solo_coder
+        # catalog. Work sessions use the current solo_work_remote catalog.
+        response = await client.get(
+            url,
+            headers=headers,
+            params={"functions": "solo_work_remote", "show_custom_model": "true"},
+        )
     if response.status_code >= 400:
         raise TraeWorkAuthError(f"models HTTP {response.status_code}")
     try:

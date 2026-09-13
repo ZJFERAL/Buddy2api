@@ -9,7 +9,6 @@ import database as db
 from providers.protocol import ChannelId, QuotaSnapshot
 from providers.qclaw import chat, jprx, oauth, quota, store
 from providers.qclaw.constants import (
-    ALIASES,
     CHANNEL_ID,
     DISPLAY_NAME,
     STATIC_MODELS,
@@ -27,11 +26,13 @@ class QClawProvider:
         return catalog.models_for(self.id, [{"id": item} for item in STATIC_MODELS])
 
     def alias_map(self) -> dict[str, str]:
-        return dict(ALIASES)
+        import aliases
+
+        return aliases.merged_map(self.id)
 
     def accepts_model(self, inner: str) -> bool:
         value = (inner or "").strip()
-        if value in ALIASES or value.startswith("pool-"):
+        if value in self.alias_map() or value.startswith("pool-"):
             return True
         ids = {str(item.get("id")) for item in self.list_models() if isinstance(item, dict)}
         return value in ids

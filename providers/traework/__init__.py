@@ -8,7 +8,7 @@ import auth_manager
 import database as db
 from providers.protocol import ChannelId, QuotaSnapshot
 from providers.traework import chat, quota, store
-from providers.traework.constants import ALIASES, CHANNEL_ID, DISPLAY_NAME, STATIC_MODELS
+from providers.traework.constants import CHANNEL_ID, DISPLAY_NAME, STATIC_MODELS
 from providers.traework.token import TraeWorkAuthError, is_token_expired, refresh_account
 
 
@@ -23,7 +23,9 @@ class TraeWorkProvider:
         return catalog.models_for(self.id, [{"id": item} for item in STATIC_MODELS])
 
     def alias_map(self) -> dict[str, str]:
-        return dict(ALIASES)
+        import aliases
+
+        return aliases.merged_map(self.id)
 
     def accepts_model(self, inner: str) -> bool:
         return chat.accepts_model(inner)
