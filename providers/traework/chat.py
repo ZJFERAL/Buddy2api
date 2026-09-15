@@ -62,77 +62,190 @@ def _last_user_text(payload: dict) -> str:
     return ""
 
 
-def _walk_text(value, bucket: list[str]) -> None:
+_SKIP_EVENT_NAMES = {
+    "heartbeat",
+    "status_changed",
+    "platform_timing",
+    "timing_events",
+    "token_usage",
+    "model_config",
+    "project_name_message",
+    "session_title_message",
+    "session_icon_message",
+    "metadata",
+}
+_SKIP_NODE_TYPES = {"status", "heartbeat", "metadata"}
+_REASONING_NODE_TYPES = {"thinking", "reasoning", "thought", "chain_of_thought"}
+_TEXT_NODE_TYPES = {"text", "markdown", "output_text", "answer"}
+_FINISH_TOOL_NAMES = {"finish", "attempt_completion", "complete_task"}
+_RECURSE_KEYS = ("messages", "content", "data", "plan_item", "payload")
+
+
+def _intish(value) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_usage(raw) -> dict:
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    prompt = _intish(raw.get("prompt_tokens"))
+    completion = _intish(raw.get("completion_tokens"))
+    total = _intish(raw.get("total_tokens")) or (prompt + completion)
+    if not prompt and not completion and not total:
+        return {}
+    usage = {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+    }
+    reasoning = _intish(raw.get("reasoning_tokens"))
+    if reasoning:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning}
+    return usage
+
+
+def _dedupe(chunks: list[str]) -> str:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for chunk in chunks:
+        text = (chunk or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return "\n".join(ordered).strip()
+
+
+def _finish_summary(info: dict) -> str:
+    name = str(info.get("name") or "").strip().lower()
+    if name not in _FINISH_TOOL_NAMES:
+        return ""
+    params = info.get("params") if isinstance(info.get("params"), dict) else {}
+    summary = params.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+    result = info.get("result") if isinstance(info.get("result"), dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    nested = data.get("summary")
+    if isinstance(nested, str) and nested.strip():
+        return nested.strip()
+    return ""
+
+
+def _collect(value, content: list[str], reasoning: list[str]) -> None:
     if isinstance(value, str):
         text = value.strip()
         if text.startswith("{") or text.startswith("["):
             try:
-                _walk_text(json.loads(text), bucket)
+                _collect(json.loads(text), content, reasoning)
             except json.JSONDecodeError:
                 pass
         return
-    if isinstance(value, dict):
-        kind = str(value.get("type") or "")
-        if kind in {"status", "tool", "tool_call"}:
-            return
-        for key in ("text_content", "text", "markdown", "plain_text", "reasoning_content"):
-            item = value.get(key)
-            if isinstance(item, str) and item.strip():
-                bucket.append(item.strip())
-        content = value.get("content")
-        if isinstance(content, str) and content.strip():
-            if content.startswith("{") or content.startswith("["):
-                _walk_text(content, bucket)
-            elif content.strip() not in bucket:
-                bucket.append(content.strip())
-        elif isinstance(content, (dict, list)):
-            _walk_text(content, bucket)
-        messages = value.get("messages")
-        if isinstance(messages, list):
-            _walk_text(messages, bucket)
-        return
     if isinstance(value, list):
         for item in value:
-            _walk_text(item, bucket)
+            _collect(item, content, reasoning)
+        return
+    if not isinstance(value, dict):
+        return
+
+    kind = str(value.get("type") or "")
+    if kind in _SKIP_NODE_TYPES:
+        return
+
+    info = value.get("tool_call_info")
+    if isinstance(info, dict):
+        summary = _finish_summary(info)
+        if summary:
+            content.append(summary)
+
+    if kind in {"tool", "tool_call"}:
+        summary = _finish_summary(value)
+        if summary:
+            content.append(summary)
+        return
+
+    thought = value.get("reasoning_content")
+    if isinstance(thought, str) and thought.strip():
+        reasoning.append(thought.strip())
+    thought = value.get("thought")
+    if kind in _REASONING_NODE_TYPES and isinstance(thought, str) and thought.strip():
+        reasoning.append(thought.strip())
+
+    if kind in _REASONING_NODE_TYPES:
+        for key in ("text_content", "text", "markdown", "plain_text"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                reasoning.append(item.strip())
+        return
+
+    if kind in _TEXT_NODE_TYPES or kind in {"", "plan_item"}:
+        for key in ("text_content", "text", "markdown", "plain_text"):
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                content.append(item.strip())
+
+    for key in _RECURSE_KEYS:
+        child = value.get(key)
+        if child is None or child is value:
+            continue
+        if key == "content" and isinstance(child, str) and child.strip() and not child.strip().startswith(("{", "[")):
+            if child.strip() not in content:
+                content.append(child.strip())
+            continue
+        _collect(child, content, reasoning)
 
 
 def _text_from_event(event: str, payload: dict) -> str:
-    if event in {
-        "heartbeat",
-        "status_changed",
-        "platform_timing",
-        "timing_events",
-        "token_usage",
-        "model_config",
-        "project_name_message",
-        "session_title_message",
-        "session_icon_message",
-        "metadata",
-    }:
+    if event in _SKIP_EVENT_NAMES:
         return ""
-    bucket: list[str] = []
-    _walk_text(payload, bucket)
-    return "\n".join(dict.fromkeys(bucket)).strip()
+    content: list[str] = []
+    reasoning: list[str] = []
+    _collect(payload, content, reasoning)
+    return _dedupe(content)
 
 
-def extract_assistant_text(items: list) -> str:
-    chunks: list[str] = []
+def extract_assistant_turn(items: list) -> dict:
+    content: list[str] = []
+    reasoning: list[str] = []
+    usage: dict = {}
     for item in items:
         if not isinstance(item, dict):
             continue
         if item.get("role") not in {"assistant", "system"} and item.get("message_type") != "task":
             continue
-        _walk_text(item.get("content"), chunks)
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for chunk in chunks:
-        if chunk not in seen:
-            seen.add(chunk)
-            ordered.append(chunk)
-    return "\n".join(ordered).strip()
+        _collect(item.get("content"), content, reasoning)
+        parsed = _parse_usage(item.get("token_usage"))
+        if parsed:
+            usage = parsed
+    return {
+        "text": _dedupe(content),
+        "reasoning": _dedupe(reasoning),
+        "usage": usage,
+    }
 
 
-def _openai_json(model: str, text: str, finish: str = "stop") -> dict:
+def extract_assistant_text(items: list) -> str:
+    return extract_assistant_turn(items)["text"]
+
+
+def _openai_json(
+    model: str,
+    text: str,
+    finish: str = "stop",
+    reasoning: str = "",
+    usage: dict | None = None,
+) -> dict:
+    message = {"role": "assistant", "content": text}
+    if reasoning:
+        message["reasoning_content"] = reasoning
     return {
         "id": f"traework-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -141,11 +254,11 @@ def _openai_json(model: str, text: str, finish: str = "stop") -> dict:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
+                "message": message,
                 "finish_reason": finish,
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 
@@ -172,7 +285,8 @@ async def _pick(tried: set[int]) -> dict | None:
     return None
 
 
-def _log(api_key_info, account, model_name, stream, finish, status, error, t0):
+def _log(api_key_info, account, model_name, stream, finish, status, error, t0, usage: dict | None = None):
+    usage = usage or {}
     try:
         db.record_request(
             {
@@ -183,9 +297,9 @@ def _log(api_key_info, account, model_name, stream, finish, status, error, t0):
                 "provider": CHANNEL_ID,
                 "model": model_name,
                 "stream": 1 if stream else 0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
                 "credit": 0,
                 "finish_reason": finish,
                 "duration_ms": int((time.time() - t0) * 1000),
@@ -198,7 +312,7 @@ def _log(api_key_info, account, model_name, stream, finish, status, error, t0):
         pass
 
 
-async def _turn(account: dict, prompt: str, model: str, timeout: float = 90.0) -> str:
+async def _turn(account: dict, prompt: str, model: str, timeout: float = 90.0) -> dict:
     headers = auth_headers(account)
     session_url = f"{AGENT_API}{SESSIONS_PATH}"
     sid = ""
@@ -279,10 +393,15 @@ async def _turn(account: dict, prompt: str, model: str, timeout: float = 90.0) -
             messages = await client.get(f"{session_url}/{sid}/messages", headers=headers)
             body = messages.json() if messages.content else {}
             items = ((body.get("data") or {}).get("items") or [])
-            text = extract_assistant_text(items) or "\n".join(dict.fromkeys(pieces)).strip()
+            turn = extract_assistant_turn(items)
+            text = turn["text"] or "\n".join(dict.fromkeys(pieces)).strip()
             if not text:
                 raise TraeWorkAuthError("TraeWork turn finished without assistant text")
-            return text
+            return {
+                "text": text,
+                "reasoning": turn["reasoning"],
+                "usage": turn["usage"],
+            }
         finally:
             task.cancel()
             try:
@@ -309,12 +428,22 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
         tried.add(int(account["id"]))
         t0 = time.time()
         try:
-            text = await _turn(account, prompt, model)
+            turn = await _turn(account, prompt, model)
             auth_manager.mark_account_success(account["id"])
-            _log(api_key_info, account, payload.get("model") or model, stream, "stop", 200, "", t0)
+            _log(
+                api_key_info, account, payload.get("model") or model, stream, "stop", 200, "", t0,
+                turn.get("usage"),
+            )
+            model_name = str(payload.get("model") or model)
             if stream:
-                return ("stream", _stream_once(text, str(payload.get("model") or model)))
-            return ("json", _openai_json(str(payload.get("model") or model), text))
+                return (
+                    "stream",
+                    _stream_once(turn["text"], model_name, turn.get("reasoning") or "", turn.get("usage")),
+                )
+            return (
+                "json",
+                _openai_json(model_name, turn["text"], reasoning=turn.get("reasoning") or "", usage=turn.get("usage")),
+            )
         except TraeWorkAuthError as exc:
             auth_manager.mark_account_failure(account["id"], 503)
             last_error = ("error", (503, {"error": {"message": str(exc)[:240], "type": "server_error"}}))
@@ -339,30 +468,44 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
     )
 
 
-async def _stream_once(text: str, model: str) -> AsyncGenerator[str, None]:
+async def _stream_once(
+    text: str,
+    model: str,
+    reasoning: str = "",
+    usage: dict | None = None,
+) -> AsyncGenerator[bytes, None]:
+    cid = f"traework-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+    delta: dict = {"role": "assistant"}
+    if reasoning:
+        delta["reasoning_content"] = reasoning
+    if text:
+        delta["content"] = text
     chunk = {
-        "id": f"traework-{uuid.uuid4().hex[:12]}",
+        "id": cid,
         "object": "chat.completion.chunk",
-        "created": int(time.time()),
+        "created": created,
         "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": None}],
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
     }
-    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode("utf-8")
     done = {
-        "id": chunk["id"],
+        "id": cid,
         "object": "chat.completion.chunk",
-        "created": chunk["created"],
+        "created": created,
         "model": model,
         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
-    yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n"
-    yield "data: [DONE]\n\n"
+    yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n".encode("utf-8")
+    yield b"data: [DONE]\n\n"
 
 
 async def test_chat(account: dict, model: str = "qwen-3.7-plus", prompt: str = "请回复：pong") -> dict:
     t0 = time.time()
     try:
-        text = await _turn(account, prompt or "请回复：pong", translate_model(model or "auto"), timeout=90.0)
+        turn = await _turn(account, prompt or "请回复：pong", translate_model(model or "auto"), timeout=90.0)
+        text = turn["text"]
     except TraeWorkAuthError as exc:
         return {
             "ok": False,

@@ -643,9 +643,9 @@ def chat_response_to_responses(
 
 
 async def _iter_chat_sse_data(
-    chat_stream: AsyncGenerator[bytes, None],
+    chat_stream: AsyncGenerator[bytes | bytearray | str, None],
 ) -> AsyncGenerator[str, None]:
-    """Yield complete SSE data events from arbitrary HTTP byte chunks."""
+    """Yield complete SSE data events from HTTP byte chunks or text SSE frames."""
     buffer = b""
     data_lines: list[bytes] = []
     event_bytes = 0
@@ -695,6 +695,8 @@ async def _iter_chat_sse_data(
     async for chunk in chat_stream:
         if not chunk:
             continue
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
         if not isinstance(chunk, (bytes, bytearray)):
             raise TypeError("upstream stream chunks must be bytes")
         buffer += bytes(chunk)
@@ -721,7 +723,7 @@ async def _iter_chat_sse_data(
 
 
 async def chat_stream_to_responses_stream(
-    chat_stream: AsyncGenerator[bytes, None],
+    chat_stream: AsyncGenerator[bytes | bytearray | str, None],
     model: str,
     resp_payload: Optional[dict] = None,
 ) -> AsyncGenerator[str, None]:

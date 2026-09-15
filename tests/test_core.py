@@ -22,7 +22,7 @@ def _chat_sse(payload: dict) -> bytes:
 
 
 def _collect_response_events(
-    chunks: list[bytes],
+    chunks: list[bytes | str],
     resp_payload: dict | None = None,
 ) -> list[tuple[str, dict]]:
     async def source():
@@ -1186,6 +1186,22 @@ def test_responses_stream_emits_complete_text_lifecycle():
     assert names[-1] == "response.completed"
     completed = _events_of_type(events, "response.completed")[0]["response"]
     assert completed["output"][0]["content"][0]["text"] == "hello"
+
+
+def test_responses_stream_accepts_text_sse_chunks():
+    events = _collect_response_events([
+        (
+            'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"pong"},'
+            '"finish_reason":null}]}\n\n'
+        ),
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+        "data: [DONE]\n\n",
+    ])
+
+    assert not _events_of_type(events, "response.failed")
+    assert [name for name, _ in events][-1] == "response.completed"
+    completed = _events_of_type(events, "response.completed")[0]["response"]
+    assert completed["output"][0]["content"][0]["text"] == "pong"
 
 
 def test_responses_stream_orders_reasoning_before_text_and_tool():
@@ -2993,6 +3009,14 @@ def test_stall_detection_ack_text():
     assert proxy._is_tool_stall(body, "stop", False, "好的，马上继续跑流程。")
 
 
+def test_stall_detection_short_english_ack():
+    body = _tool_loop_body()
+    assert proxy._looks_like_stall_text("OK.")
+    assert proxy._looks_like_stall_text("Got it, continuing.")
+    assert proxy._is_tool_stall(body, "stop", False, "Let me write it.")
+    assert not proxy._looks_like_stall_text("In summary, the three files are done.")
+
+
 def test_stall_detection_rejects_summary():
     body = _tool_loop_body()
     assert not proxy._looks_like_stall_text("任务完成，总结如下：共处理 3 个文件。")
@@ -3120,6 +3144,67 @@ def test_stall_retry_nonstream_keeps_first_answer_when_retry_has_no_tools(monkey
     assert result[0] == "json"
     assert result[1]["choices"][0]["message"].get("content") == "好的，马上继续。"
     assert calls == [None, "required"]
+
+
+def test_stream_tool_loop_retries_stall_like_nonstream(monkeypatch, isolated_db):
+    stall_json = {
+        "id": "c1", "object": "chat.completion", "created": 1,
+        "model": "auto",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Let me continue."},
+                     "finish_reason": "stop"}],
+        "usage": {},
+    }
+    fixed_json = {
+        "id": "c2", "object": "chat.completion", "created": 2,
+        "model": "auto",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t1", "type": "function", "function": {"name": "list_files", "arguments": "{}"}}]},
+                     "finish_reason": "tool_calls"}],
+        "usage": {},
+    }
+    calls = []
+    account = {"id": 1, "name": "test-account"}
+
+    async def pick_account(_excluded):
+        return account
+
+    async def valid_headers(_account):
+        return {"Authorization": "Bearer test"}
+
+    async def fake_collect(url, headers, body, account, api_key_info, model_name, t0):
+        calls.append(body.get("tool_choice"))
+        if len(calls) == 1:
+            return ("json", stall_json)
+        return ("json", fixed_json)
+
+    monkeypatch.setattr(proxy, "_collect_stream", fake_collect)
+    monkeypatch.setattr(auth_manager, "pick_account_with_fallback", pick_account)
+    monkeypatch.setattr(auth_manager, "get_valid_headers", valid_headers)
+    monkeypatch.setattr(auth_manager, "mark_account_success", lambda _id: None)
+    monkeypatch.setattr(auth_manager, "mark_account_failure", lambda *_a: None)
+    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
+
+    body = _tool_loop_body()
+    body["stream"] = True
+
+    async def run():
+        result = await proxy.proxy_chat_completions(body, None)
+        assert result[0] == "stream"
+        return b"".join([chunk async for chunk in result[1]])
+
+    raw = asyncio.run(run())
+    payloads, done_count = _parse_chat_proxy_sse(raw)
+    assert done_count == 1
+    assert calls == [None, "required"]
+    assert any(
+        (p.get("choices") or [{}])[0].get("delta", {}).get("tool_calls")
+        for p in payloads
+    )
+    assert any(
+        (p.get("choices") or [{}])[0].get("finish_reason") == "tool_calls"
+        for p in payloads
+    )
 
 
 def _stall_stream_chunks() -> list[bytes]:
