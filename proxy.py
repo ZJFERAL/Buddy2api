@@ -58,8 +58,7 @@ def _looks_like_audit_block(text: str) -> bool:
 
 # 工具停转（tool stall）检测与修复开关。
 # 场景：agent 工具循环回合（请求带 tools 且历史含 role=tool），上游模型却以
-# finish_reason=stop + 纯文本（"好的，马上继续跑流程"式确认话术）结束且未调用
-# 任何工具 —— 工作流卡死成纯聊天（issue #31）。
+# finish_reason=stop + 纯文本结束且未调用任何工具（issue #31 / #61）。
 TOOL_STALL_RETRY = (
     os.environ.get("CB_GATEWAY_TOOL_STALL_RETRY", "1").strip().lower()
     not in {"0", "false", "no", "off"}
@@ -72,10 +71,20 @@ TOOL_STALL_FAIL_STREAM = (
 _STALL_POSITIVE_MARKERS = (
     "马上继续", "继续跑", "接下来需要", "请问您接下来",
     "这就去", "马上开始", "我现在就", "这就开始", "稍等",
+    "好的继续",
+)
+_STALL_POSITIVE_MARKERS_EN = (
+    "i'll continue", "i will continue", "let me continue",
+    "continuing", "got it", "one moment", "hang on", "right away",
 )
 _STALL_NEGATIVE_MARKERS = (
     "总结", "已完成", "结果如下", "以下是", "以上就是", "完成情况",
 )
+_STALL_NEGATIVE_MARKERS_EN = (
+    "in summary", "to summarize", "task complete", "already done",
+    "all done", "here's the result", "here is the result",
+)
+_STALL_SHORT_LIMIT = 400
 
 
 def _request_has_tool_loop(body: dict) -> bool:
@@ -89,16 +98,21 @@ def _request_has_tool_loop(body: dict) -> bool:
 
 
 def _looks_like_stall_text(text: str) -> bool:
-    """空内容视为 stall；否则要求短文本且像'知道了，马上继续'式话术，
-    排除总结性回答。"""
+    """空内容或短的非总结回复视为 stall；长文本仍要像确认话术。"""
     text = (text or "").strip()
     if not text:
         return True
-    if len(text) > 160:
+    collapsed = " ".join(text.split())
+    lower = collapsed.lower()
+    if any(marker in collapsed for marker in _STALL_NEGATIVE_MARKERS):
         return False
-    if any(marker in text for marker in _STALL_NEGATIVE_MARKERS):
+    if any(marker in lower for marker in _STALL_NEGATIVE_MARKERS_EN):
         return False
-    return any(marker in text for marker in _STALL_POSITIVE_MARKERS)
+    if len(collapsed) <= _STALL_SHORT_LIMIT:
+        return True
+    return any(marker in collapsed for marker in _STALL_POSITIVE_MARKERS) or any(
+        marker in lower for marker in _STALL_POSITIVE_MARKERS_EN
+    )
 
 
 def _is_tool_stall(body: dict, finish_reason, tool_calls: bool, text: str) -> bool:
@@ -679,31 +693,55 @@ def _log_request(api_key_info, account, model_name, stream,
         pass
 
 
-async def proxy_chat_completions(
-    payload: dict,
-    api_key_info: Optional[dict] = None,
-    log_model: Optional[str] = None,
+def _sse_from_chat_completion(result: dict) -> list[bytes]:
+    choice = (result.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    model = result.get("model") or "auto"
+    cid = result.get("id") or ("chatcmpl-" + os.urandom(12).hex())
+    created = result.get("created") or int(time.time())
+    finish = choice.get("finish_reason") or "stop"
+    delta: dict = {"role": "assistant"}
+    if message.get("content"):
+        delta["content"] = message["content"]
+    if message.get("reasoning_content"):
+        delta["reasoning_content"] = message["reasoning_content"]
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        delta["tool_calls"] = [
+            {
+                "index": index,
+                "id": item.get("id"),
+                "type": item.get("type") or "function",
+                "function": item.get("function") or {},
+            }
+            for index, item in enumerate(tool_calls)
+            if isinstance(item, dict)
+        ]
+    chunks = [
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+        },
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
+            "usage": result.get("usage") or {},
+        },
+    ]
+    return [_json_sse_event(item) for item in chunks] + [b"data: [DONE]\n\n"]
+
+
+async def _json_chat_with_stall_retry(
+    body: dict,
+    api_key_info: Optional[dict],
+    model_name: str,
 ) -> tuple:
-    """
-    主代理函数。
-
-    返回:
-      - ("stream", async_generator)  流式响应
-      - ("json", dict)               非流式响应
-      - ("error", (status_code, detail))  错误
-    """
-    client_wants_stream = bool(payload.get("stream"))
-    body = build_backend_body(payload)
-    if log_model is None and isinstance(api_key_info, dict):
-        log_model = api_key_info.get("_log_model")
-    model_name = log_model if log_model is not None else payload.get("model", "auto")
-
-    if client_wants_stream:
-        return (
-            "stream",
-            _stream_upstream(body, api_key_info, model_name),
-        )
-
     tried_ids: set[int] = set()
     max_retries = 3
     last_error = None
@@ -723,8 +761,7 @@ async def proxy_chat_completions(
         t0 = time.time()
         result = await _collect_stream(url, headers, body, account, api_key_info, model_name, t0)
         if result[0] == "json":
-            # 工具停转修复：agent 回合被上游以 stop+纯文本结束且未调用工具时，
-            # 用 tool_choice=required 重试一次；重试产出工具调用则采用重试结果。
+            # 工具停转：stop+纯文本且未调用工具时，用 tool_choice=required 再打一次。
             if TOOL_STALL_RETRY:
                 choice = (result[1].get("choices") or [{}])[0]
                 message = choice.get("message") or {}
@@ -771,6 +808,57 @@ async def proxy_chat_completions(
         "error",
         (503, {"error": {"message": "No available accounts", "type": "server_error"}}),
     )
+
+
+async def _stream_collected_with_stall_retry(
+    body: dict,
+    api_key_info: Optional[dict],
+    model_name: str,
+) -> AsyncGenerator[bytes, None]:
+    result = await _json_chat_with_stall_retry(body, api_key_info, model_name)
+    if result[0] == "error":
+        status, detail = result[1]
+        if isinstance(detail, dict):
+            yield _json_sse_event(detail)
+            yield b"data: [DONE]\n\n"
+        else:
+            yield _err_sse_event(str(detail).encode("utf-8"), status)
+        return
+    for chunk in _sse_from_chat_completion(result[1]):
+        yield chunk
+
+
+async def proxy_chat_completions(
+    payload: dict,
+    api_key_info: Optional[dict] = None,
+    log_model: Optional[str] = None,
+) -> tuple:
+    """
+    主代理函数。
+
+    返回:
+      - ("stream", async_generator)  流式响应
+      - ("json", dict)               非流式响应
+      - ("error", (status_code, detail))  错误
+    """
+    client_wants_stream = bool(payload.get("stream"))
+    body = build_backend_body(payload)
+    if log_model is None and isinstance(api_key_info, dict):
+        log_model = api_key_info.get("_log_model")
+    model_name = log_model if log_model is not None else payload.get("model", "auto")
+
+    if client_wants_stream:
+        if TOOL_STALL_RETRY and _request_has_tool_loop(body):
+            return (
+                "stream",
+                _stream_collected_with_stall_retry(body, api_key_info, model_name),
+            )
+        return (
+            "stream",
+            _stream_upstream(body, api_key_info, model_name),
+        )
+
+    return await _json_chat_with_stall_retry(body, api_key_info, model_name)
 
 
 async def test_account_chat(account: dict, model: str = "auto", prompt: str = "ping") -> dict:
