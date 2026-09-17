@@ -11,6 +11,7 @@ from fastapi import HTTPException
 import providers
 import responses
 from reasoning_controls import normalize_chat_reasoning
+from model_capacity import clamp_output_tokens
 from providers.protocol import (
     BindResult,
     InvalidModel,
@@ -237,6 +238,9 @@ async def _chat_after_bind_no_echo(
         raise UnknownChannel(bound.channel)
     inner = provider.translate_model(bound.inner)
     dispatch = normalize_chat_reasoning(dispatch_payload(payload, inner))
+    model = next((item for item in provider.list_models()
+                  if isinstance(item, dict) and item.get("id") == inner), None)
+    dispatch = clamp_output_tokens(dispatch, model)
     info = dict(api_key_info or {})
     info["_log_model"] = bound.original
     info["_bind_channel"] = bound.channel

@@ -82,6 +82,12 @@ The database migrates on startup. Existing keys stay on `workbuddy`. Startup no 
 
 Unprefixed `auto` follows the key’s channel. Use a separate key per channel. On the Models page, “一键读取供应模型” refreshes each channel’s supplier list separately; a TraeWork-only id such as Doubao is never merged into WorkBuddy.
 
+### Model capacity discovery
+
+Refreshing supplier models now retains upstream input/output capacities. `/v1/models` exposes `context_window` and `max_output_tokens`; WorkBuddy's `maxInputTokens` and `maxOutputTokens` map to these fields, rather than treating its desktop `contextWindow.defaultLength` as the maximum. DSH custom providers can import these capacities through **Fetch available models**, then add and save the selected models. Existing configured models are not overwritten automatically.
+
+Missing fields independently fall back to 262,144 context tokens and 32,768 output tokens on every channel. The per-field `capacity_source` is `catalog` or `fallback`. Fallbacks are configuration defaults, not verified upstream limits. Explicit `max_tokens` and `max_completion_tokens` requests are clamped only when the catalog contains a known output limit; converted Responses `max_output_tokens` requests use the same path. Omitted budgets stay omitted, and unknown capacities do not impose a hard cap. Reaching a configured output budget can still produce `length`; discovery does not prevent all long-task truncation.
+
 ### Reasoning effort
 
 WorkBuddy's collected responses, including the default tool-stall retry path, reject partial text without completion metadata instead of synthesizing a successful `stop`. An explicit `finish_reason` followed by EOF remains valid without `[DONE]`. A `[DONE]` event alone does not make text without a finish reason complete. This validation does not determine whether a model's explicit `stop` is premature or resolve every long-session stall.

@@ -317,6 +317,7 @@ async def health():
 
 def collect_v1_models() -> list[dict]:
     """Aggregate per-channel catalogs for GET /v1/models. WorkBuddy is bare + namespaced."""
+    from model_capacity import discovery_capacity
     data = []
     workbuddy = providers.get_provider("workbuddy")
     wb_models = workbuddy.list_models() if workbuddy else db.get_setting("models", proxy.DEFAULT_MODELS)
@@ -328,6 +329,7 @@ def collect_v1_models() -> list[dict]:
             "created": 0,
             "owned_by": "buddy2api",
             "channel": "workbuddy",
+            **discovery_capacity(item),
         })
         data.append({
             "id": f"workbuddy/{mid}",
@@ -335,6 +337,7 @@ def collect_v1_models() -> list[dict]:
             "created": 0,
             "owned_by": "buddy2api",
             "channel": "workbuddy",
+            **discovery_capacity(item),
         })
     for channel in providers.enabled_provider_ids():
         if channel == "workbuddy":
@@ -350,6 +353,7 @@ def collect_v1_models() -> list[dict]:
                 "created": 0,
                 "owned_by": "buddy2api",
                 "channel": channel,
+                **discovery_capacity(item),
             })
     return data
 

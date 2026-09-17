@@ -22,6 +22,105 @@ TRAE_NEW_DOUBAO = "Doubao-Seed-2.2-Pro"
 TRAE_DOUBAO_TURBO = "Doubao-Seed-2.1-Turbo"
 TRAE_DOUBAO_CODE = "Doubao-Seed-2.0-Code"
 
+
+@pytest.mark.parametrize("channel", ["workbuddy", "qclaw", "qwenwork", "traework"])
+def test_capacity_survives_supplier_catalog_and_public_listing(channel, isolated_db, all_channels):
+    import catalog
+    from providers.workbuddy.models import parse_supplier_models as wb
+    from providers.qclaw.jprx import parse_model_list as qc
+    from providers.qwenwork.models import parse_supplier_models as qw
+    from providers.traework.models import parse_supplier_models as tw
+
+    row = {"id": "capacity-test", "maxInputTokens": 1000000, "maxOutputTokens": 128000,
+           "contextWindow": {"defaultLength": 300000, "supportedLengths": [300000, 1000000]}}
+    parsed = {"workbuddy": wb, "qclaw": qc, "qwenwork": qw, "traework": tw}[channel]([row])
+    normalized = catalog.normalize_models(parsed)
+    catalog.save_catalog(channel, normalized)
+    public_id = "capacity-test" if channel == "workbuddy" else f"{channel}/capacity-test"
+    item = next(item for item in server.collect_v1_models() if item["id"] == public_id)
+    assert item["context_window"] == 1000000
+    assert item["max_output_tokens"] == 128000
+    assert item["capacity_source"] == {"context_window": "catalog", "max_output_tokens": "catalog"}
+    if channel == "workbuddy":
+        prefixed = next(item for item in server.collect_v1_models() if item["id"] == f"workbuddy/{public_id}")
+        assert prefixed["context_window"] == item["context_window"]
+
+
+def test_all_channels_publish_capacity_defaults_without_persisting_guesses(isolated_db, all_channels):
+    import catalog
+
+    for channel in ("workbuddy", "qclaw", "qwenwork", "traework"):
+        catalog.save_catalog(channel, [{"id": "unknown"}])
+    items = server.collect_v1_models()
+    assert len(items) == 5
+    for item in items:
+        assert item["context_window"] == 262144
+        assert item["max_output_tokens"] == 32768
+        assert set(item["capacity_source"].values()) == {"fallback"}
+        assert catalog.stored_catalog(item["channel"]) == [{"id": "unknown"}]
+
+
+@pytest.mark.parametrize("bad", [True, False, 0, -1, 1.5, "1000000", None, {}])
+def test_invalid_capacity_values_fall_back(bad):
+    from model_capacity import discovery_capacity
+
+    item = discovery_capacity({"maxInputTokens": bad, "maxOutputTokens": bad})
+    assert item["context_window"] == 262144
+    assert item["max_output_tokens"] == 32768
+
+
+def test_string_models_and_partial_capacity_remain_supported():
+    import catalog
+    from model_capacity import discovery_capacity
+    from providers.qclaw.jprx import parse_model_list
+    from providers.traework.models import parse_supplier_models
+
+    assert catalog.normalize_models(["legacy"]) == [{"id": "legacy", "name": "legacy"}]
+    assert parse_model_list(["legacy"])[0]["id"] == "legacy"
+    assert parse_supplier_models(["legacy"])[0]["id"] == "legacy"
+    item = discovery_capacity({"max_output_tokens": 64000})
+    assert item["context_window"] == 262144
+    assert item["max_output_tokens"] == 64000
+    assert item["capacity_source"] == {"context_window": "fallback", "max_output_tokens": "catalog"}
+
+
+@pytest.mark.parametrize("field", ["max_tokens", "max_completion_tokens"])
+def test_explicit_output_budget_is_clamped_only_to_known_capacity(field):
+    from model_capacity import clamp_output_tokens
+
+    payload = {field: 128000}
+    assert clamp_output_tokens(payload, {"max_output_tokens": 64000})[field] == 64000
+    assert payload[field] == 128000
+    assert clamp_output_tokens(payload, {})[field] == 128000
+    assert clamp_output_tokens({field: 8000}, {"max_output_tokens": 64000})[field] == 8000
+    assert clamp_output_tokens({}, {"max_output_tokens": 64000}) == {}
+
+
+@pytest.mark.parametrize("responses_api", [False, True])
+def test_dispatch_clamps_capacity_after_alias_resolution(monkeypatch, responses_api):
+    from providers.protocol import BindResult
+
+    class Provider:
+        def translate_model(self, model):
+            assert model == "alias"
+            return "real-model"
+
+        def list_models(self):
+            return [{"id": "real-model", "max_output_tokens": 64000}]
+
+        async def chat_completions(self, payload, info):
+            assert payload["model"] == "real-model"
+            assert payload["max_tokens"] == 64000
+            return ("json", {"choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]})
+
+    monkeypatch.setattr(providers, "get_provider", lambda channel: Provider())
+    bound = BindResult(channel="workbuddy", inner="alias", original="workbuddy/alias")
+    if responses_api:
+        result = asyncio.run(router.responses_after_bind(bound, {"input": "hello", "max_output_tokens": 128000}, None))
+    else:
+        result = asyncio.run(router.chat_after_bind(bound, {"messages": [], "max_tokens": 128000}, None))
+    assert result[0] == "json"
+
 QCLAW_HTTP_PAYLOAD = {
     "ret": 0,
     "data": {

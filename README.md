@@ -159,6 +159,12 @@ python server.py
 
 接口：`/v1/chat/completions`、`/v1/responses`、`/v1/models`。没加前缀的 `auto` 走这把 Key 绑定的通道。Codex 用 Responses 接口；管理页选 Codex 类型的 Key 会按 Codex 特征 prompt 做清洗（其它客户端借用这把 Key、但没有 Codex 特征时不改写）。
 
+### 模型容量与自动发现
+
+「一键读取供应模型」会保存上游提供的输入/输出容量。`/v1/models` 返回 `context_window` 和 `max_output_tokens`；WorkBuddy 的 `maxInputTokens` / `maxOutputTokens` 会映射为这两个字段，不把官方客户端的 `contextWindow.defaultLength` 当成模型最大容量。DSH 自定义提供方使用「获取可用模型」重新添加并保存模型时，可自动读取容量；已有模型配置不会自动覆盖。
+
+各通道缺失的容量字段分别默认显示 262,144 上下文 / 32,768 输出，`capacity_source` 标记每个字段来自 `catalog` 还是 `fallback`。默认值是配置兜底，不是上游保证；同名模型在不同通道的限制也可能不同。仅当目录中有已知输出限制时，网关会把显式的 `max_tokens` / `max_completion_tokens` 裁剪到该限制（Responses 的 `max_output_tokens` 经转换后同样适用）。未指定输出预算的请求不注入预算，未知容量不用于强制裁剪。达到输出上限仍可能以 `length` 结束，容量发现不能保证长任务永不截断。
+
 ### 思考强度
 
 智能体可以在 Chat Completions 中发送顶层 `reasoning_effort`，在 Responses 中发送标准的 `reasoning: {"effort": "high"}`。网关也兼容 OpenCode、DSH、Cherry 和 Claude 风格的 `reasoning.effort`、`reasoningEffort`、`thinking.type`、`thinking.effort`、`output_config.effort`、`enable_thinking` 等写法。可用档位为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra`；`off` 等同于 `none`。
