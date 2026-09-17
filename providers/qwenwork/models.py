@@ -6,6 +6,7 @@ import time
 import uuid
 
 import httpx
+from model_capacity import capacity_fields
 
 from providers.qwenwork import cosy
 from providers.qwenwork.chat import static_headers
@@ -28,6 +29,7 @@ def parse_supplier_models(payload) -> list[dict]:
             continue
         seen.add(mid)
         item = {"id": mid, "name": name or mid}
+        item.update(capacity_fields(row))
         description = str(row.get("description") or "")
         if description:
             item["description"] = description

@@ -12,6 +12,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 import database as db
+from model_capacity import capacity_fields
 
 CATALOG_SETTING = "channel_catalogs"
 REFRESH_SETTING = "channel_catalog_refresh"
@@ -71,6 +72,7 @@ def normalize_models(rows: Any) -> list[dict]:
             continue
         seen.add(mid)
         item = {"id": mid, "name": name or mid}
+        item.update(capacity_fields(row))
         if description:
             item["description"] = description
         models.append(item)
