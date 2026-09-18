@@ -57,7 +57,98 @@ def test_all_channels_publish_capacity_defaults_without_persisting_guesses(isola
         assert item["context_window"] == 262144
         assert item["max_output_tokens"] == 32768
         assert set(item["capacity_source"].values()) == {"fallback"}
+        assert "reasoning" not in item
+        assert "supportsReasoning" not in item
         assert catalog.stored_catalog(item["channel"]) == [{"id": "unknown"}]
+
+
+def test_workbuddy_reasoning_survives_supplier_catalog_and_public_listing(isolated_db, all_channels):
+    import catalog
+    from providers.workbuddy.models import parse_supplier_models
+
+    payload = {
+        "data": {
+            "models": [
+                {
+                    "id": "glm-5.3",
+                    "name": "GLM-5.3",
+                    "supportsReasoning": True,
+                    "reasoning": {
+                        "supportedEfforts": ["low", "high", "max", "max", ""],
+                        "defaultEffort": "high",
+                        "canDisableThinking": True,
+                    },
+                },
+                {
+                    "id": "deepseek-v4-pro",
+                    "supportsReasoning": True,
+                    "reasoning": {"effort": "high", "summary": "auto"},
+                },
+                {
+                    "id": "hy4-preview",
+                    "supportsReasoning": True,
+                    "reasoning": {"supportedEfforts": ["high"], "defaultEffort": "high"},
+                },
+            ]
+        }
+    }
+    parsed = parse_supplier_models(payload)
+    by_id = {item["id"]: item for item in parsed}
+    assert by_id["glm-5.3"]["reasoning"]["supportedEfforts"] == ["low", "high", "max"]
+    assert by_id["glm-5.3"]["reasoning"]["defaultEffort"] == "high"
+    assert by_id["glm-5.3"]["supportsReasoning"] is True
+    assert "supportedEfforts" not in by_id["deepseek-v4-pro"]["reasoning"]
+    assert by_id["deepseek-v4-pro"]["reasoning"]["defaultEffort"] == "high"
+
+    catalog.save_catalog("workbuddy", catalog.normalize_models(parsed))
+    public = {item["id"]: item for item in server.collect_v1_models()}
+    listed = public["glm-5.3"]
+    prefixed = public["workbuddy/glm-5.3"]
+    assert listed["reasoning"]["supportedEfforts"] == ["low", "high", "max"]
+    assert listed["reasoning"]["defaultEffort"] == "high"
+    assert listed["reasoning"]["canDisableThinking"] is True
+    assert listed["supportsReasoning"] is True
+    assert prefixed["reasoning"] == listed["reasoning"]
+    assert public["deepseek-v4-pro"]["reasoning"] == {"defaultEffort": "high"}
+    assert public["hy4-preview"]["reasoning"]["supportedEfforts"] == ["high"]
+    stored = catalog.stored_catalog("workbuddy")
+    assert stored is not None
+    assert "summary" not in stored[1].get("reasoning", {})
+
+
+def test_empty_or_invalid_reasoning_is_not_published():
+    from model_reasoning import reasoning_fields
+
+    assert reasoning_fields({"id": "x", "reasoning": {"supportedEfforts": []}}) == {}
+    assert reasoning_fields({"id": "x", "supportedEfforts": ["low", 1, None]}) == {
+        "reasoning": {"supportedEfforts": ["low"]}
+    }
+    assert reasoning_fields({"id": "x", "supportsReasoning": "true"}) == {}
+    assert reasoning_fields(["not-a-row"]) == {}
+
+
+def test_other_channels_do_not_invent_reasoning_from_thinking_tags(isolated_db, all_channels):
+    import catalog
+    from providers.qclaw.jprx import parse_model_list
+    from providers.qwenwork.models import parse_supplier_models as parse_qwen
+    from providers.traework.models import parse_supplier_models as parse_trae
+
+    catalog.save_catalog("qclaw", catalog.normalize_models(parse_model_list({
+        "model_status_list": [{"id": "pool-hy3-preview", "capabilities": ["深度思考"]}],
+    })))
+    catalog.save_catalog("qwenwork", catalog.normalize_models(parse_qwen({
+        "qwork": [{"key": "pro", "enable": True, "is_reasoning": False}],
+    })))
+    catalog.save_catalog("traework", catalog.normalize_models(parse_trae({
+        "data": {"list": [{"models": [{
+            "name": "glm-5.3",
+            "reasoning_effort_config": {"support_thinking": False, "options": None},
+        }]}]},
+    })))
+    public = {item["id"]: item for item in server.collect_v1_models()}
+    for model_id in ("qclaw/pool-hy3-preview", "qwenwork/pro", "traework/glm-5.3"):
+        assert "reasoning" not in public[model_id]
+        assert "supportsReasoning" not in public[model_id]
 
 
 @pytest.mark.parametrize("bad", [True, False, 0, -1, 1.5, "1000000", None, {}])

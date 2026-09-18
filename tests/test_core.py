@@ -1788,6 +1788,7 @@ def test_non_stream_aggregator_rejects_terminal_without_output(monkeypatch):
 
     assert result[0] == "error"
     assert result[1][0] == 502
+    assert result[1][1]["error"]["code"] == "incomplete_stream"
     assert "without content" in result[1][1]["error"]["message"]
 
 
@@ -2785,7 +2786,7 @@ def test_chat_proxy_stream_preserves_final_usage_when_no_failover_account(monkey
         ])
 
     raw = asyncio.run(collect())
-    final_error_logs = [entry for entry in calls["logs"] if entry[0][8] == "error"]
+    final_error_logs = [entry for entry in calls["logs"] if entry[0][8] == "incomplete_stream"]
 
     _assert_chat_proxy_error_only(raw)
     assert calls["picks"] == [set(), {1}]
@@ -2795,6 +2796,7 @@ def test_chat_proxy_stream_preserves_final_usage_when_no_failover_account(monkey
     assert final_error_logs[0][0][1]["id"] == 1
     assert final_error_logs[0][0][4:8] == (2, 3, 5, 1.25)
     assert final_error_logs[0][0][9] == 502
+    assert final_error_logs[0][0][10].startswith("[incomplete_stream]")
 
 
 def test_chat_proxy_stream_records_success_before_terminal_is_consumed(monkeypatch):
@@ -2855,24 +2857,99 @@ def test_chat_proxy_stream_records_failure_before_error_is_consumed(monkeypatch)
         )
         first = await anext(generator)
         assert calls["failures"] == [(1, 502)]
-        assert len([entry for entry in calls["logs"] if entry[0][8] == "error"]) == 1
+        assert len([entry for entry in calls["logs"] if entry[0][8] == "parse_error"]) == 1
         await generator.aclose()
         return first
 
     first = asyncio.run(consume_first())
-    final_error_logs = [entry for entry in calls["logs"] if entry[0][8] == "error"]
+    final_error_logs = [entry for entry in calls["logs"] if entry[0][8] == "parse_error"]
 
     _assert_chat_proxy_error_only(first)
     assert calls["failures"] == [(1, 502)]
     assert calls["successes"] == []
     assert len(final_error_logs) == 1
     assert final_error_logs[0][0][9] == 502
+    assert final_error_logs[0][0][10].startswith("[parse_error]")
 
 
 def test_retryable_statuses_are_explicit():
     assert proxy._is_retryable_status(429)
     assert proxy._is_retryable_status(503)
     assert not proxy._is_retryable_status(400)
+
+
+def test_empty_upstream_http_body_is_classified():
+    failure, message = proxy._classify_http_status(502, b"")
+    assert failure == "upstream_http"
+    assert message == "upstream HTTP 502, empty body"
+    payload = proxy._safe_err(b"", 502)
+    assert payload["error"]["code"] == "upstream_http"
+    assert payload["error"]["message"] == message
+
+
+def test_httpx_error_keeps_exception_type_when_message_empty():
+    class EmptyDisconnect(Exception):
+        def __str__(self):
+            return ""
+
+    message = proxy._format_httpx_error(EmptyDisconnect())
+    assert message == "EmptyDisconnect"
+    assert proxy._failure_log_message("upstream_disconnect", message).startswith("[upstream_disconnect]")
+
+
+def test_chat_proxy_stream_logs_disconnect_class(monkeypatch):
+    accounts = [{"id": 1, "name": "only-account"}]
+
+    class Boom(proxy.httpx.TransportError):
+        pass
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def aiter_bytes(self):
+            raise Boom("peer closed connection without sending complete message body (incomplete chunked read)")
+            yield b""  # pragma: no cover
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    calls = _install_chat_account_stream_fakes(monkeypatch, accounts, {1: []})
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", FakeAsyncClient)
+
+    async def collect():
+        return b"".join([
+            chunk
+            async for chunk in proxy._stream_upstream(
+                {"model": "test-model", "stream": True},
+                None,
+                "test-model",
+            )
+        ])
+
+    raw = asyncio.run(collect())
+    payloads, _done = _parse_chat_proxy_sse(raw)
+    disconnect_logs = [entry for entry in calls["logs"] if entry[0][8] == "upstream_disconnect"]
+    assert payloads[0]["error"]["code"] == "upstream_disconnect"
+    assert payloads[0]["error"]["message"].startswith("Boom:")
+    assert len(disconnect_logs) == 1
+    assert disconnect_logs[0][0][9] == 502
+    assert "[upstream_disconnect]" in disconnect_logs[0][0][10]
 
 
 def test_non_stream_proxy_fails_over_on_retryable_upstream(isolated_db, monkeypatch):
@@ -3039,6 +3116,7 @@ def test_nonstream_collection_validates_completion(monkeypatch, isolated_db, ter
     else:
         assert result[0] == "error"
         assert result[1][0] == 502
+        assert result[1][1]["error"]["code"] == "incomplete_stream"
         assert "finish reason" in result[1][1]["error"]["message"]
 
 
