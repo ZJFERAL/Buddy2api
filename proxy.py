@@ -28,6 +28,16 @@ from reasoning_controls import (
 
 BACKEND = "https://copilot.tencent.com"
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+FAILURE_UPSTREAM_HTTP = "upstream_http"
+FAILURE_UPSTREAM_DISCONNECT = "upstream_disconnect"
+FAILURE_INCOMPLETE_STREAM = "incomplete_stream"
+FAILURE_PARSE_ERROR = "parse_error"
+FAILURE_CLASSES = {
+    FAILURE_UPSTREAM_HTTP,
+    FAILURE_UPSTREAM_DISCONNECT,
+    FAILURE_INCOMPLETE_STREAM,
+    FAILURE_PARSE_ERROR,
+}
 
 # 腾讯内容审核拦截时返回的固定话术特征（HTTP 200 + 正文是这段话）。
 # 仅匹配短拒答，避免正常回答引用审查文案时被误标。
@@ -128,6 +138,61 @@ def _is_tool_stall(body: dict, finish_reason, tool_calls: bool, text: str) -> bo
 
 def _is_retryable_status(status: int) -> bool:
     return status in RETRYABLE_STATUS_CODES or status in {401, 403}
+
+
+def _format_httpx_error(exc: BaseException) -> str:
+    name = type(exc).__name__
+    text = str(exc).strip()
+    return f"{name}: {text}" if text else name
+
+
+def _classify_http_status(status: int, raw: bytes) -> tuple[str, str]:
+    body = raw.decode("utf-8", "replace").strip()
+    if body:
+        return FAILURE_UPSTREAM_HTTP, body[:500]
+    return FAILURE_UPSTREAM_HTTP, f"upstream HTTP {status}, empty body"
+
+
+def _classify_stream_eof(observer: "_ChatStreamObserver", message: str) -> str:
+    if observer.parser_error or observer.malformed_data_event:
+        return FAILURE_PARSE_ERROR
+    if observer.upstream_error:
+        return FAILURE_UPSTREAM_HTTP
+    text = (message or "").lower()
+    if "malformed sse" in text or "invalid" in text or "incomplete json" in text:
+        return FAILURE_PARSE_ERROR
+    return FAILURE_INCOMPLETE_STREAM
+
+
+def _failure_from_detail(detail, status: int) -> str:
+    if isinstance(detail, dict):
+        error = detail.get("error") if isinstance(detail.get("error"), dict) else detail
+        if isinstance(error, dict):
+            code = error.get("code")
+            if code in FAILURE_CLASSES:
+                return str(code)
+    if status in RETRYABLE_STATUS_CODES or status >= 500:
+        return FAILURE_UPSTREAM_HTTP
+    return FAILURE_UPSTREAM_HTTP
+
+
+def _failure_log_message(failure: str, message: str) -> str:
+    text = (message or "").strip()
+    prefix = f"[{failure}] "
+    if text.startswith(prefix):
+        return text[:500]
+    return (prefix + text)[:500]
+
+
+def _error_payload(message: str, failure: str, status: int | None = None) -> dict:
+    error = {
+        "message": (message or "")[:500],
+        "type": "upstream_error",
+        "code": failure,
+    }
+    if status is not None:
+        error["status"] = status
+    return {"error": error}
 
 
 async def _retry_delay(attempt: int):
@@ -268,17 +333,35 @@ def get_all_aliases() -> dict:
 
 
 def _safe_err(raw: bytes, status: int) -> dict:
+    failure, fallback = _classify_http_status(status, raw)
     try:
         detail = json.loads(raw.decode("utf-8", "replace"))
     except Exception:
-        detail = {"error": {"message": raw.decode("utf-8", "replace")[:500],
-                            "type": "upstream_error"}}
+        return _error_payload(fallback, failure, status)
+    if not isinstance(detail, dict):
+        return _error_payload(fallback, failure, status)
+    error = detail.get("error")
+    if isinstance(error, dict):
+        merged = dict(error)
+        merged.setdefault("type", "upstream_error")
+        merged.setdefault("code", failure)
+        if not str(merged.get("message") or "").strip():
+            merged["message"] = fallback
+        return {**detail, "error": merged}
+    if not raw.strip():
+        return _error_payload(fallback, failure, status)
     return detail
 
 
-def _err_sse_event(raw: bytes, status: int) -> bytes:
+def _err_sse_event(raw: bytes, status: int, failure: str | None = None) -> bytes:
     msg = raw.decode("utf-8", "replace")[:500]
-    payload = json.dumps({"error": {"message": msg, "type": "upstream_error", "code": status}})
+    payload = json.dumps({
+        "error": {
+            "message": msg,
+            "type": "upstream_error",
+            "code": failure or str(status),
+        }
+    })
     event = f"data: {payload}\n\ndata: [DONE]\n\n"
     return event.encode("utf-8")
 
@@ -794,10 +877,11 @@ async def _json_chat_with_stall_retry(
         if isinstance(detail, dict):
             error_data = detail.get("error") if isinstance(detail.get("error"), dict) else detail
             error_message = error_data.get("message", detail) if isinstance(error_data, dict) else detail
+        failure = _failure_from_detail(detail, err_status)
         _log_request(
             api_key_info, account, model_name, False,
-            0, 0, 0, 0, "retry" if will_retry else "error",
-            err_status, str(error_message)[:500], t0,
+            0, 0, 0, 0, "retry" if will_retry else failure,
+            err_status, _failure_log_message(failure, str(error_message)), t0,
             increment_usage=not will_retry,
         )
         if not will_retry:
@@ -918,6 +1002,7 @@ async def _stream_upstream(
     last_error = b"No available accounts"
     last_error_event: dict | None = None
     last_status = 503
+    last_failure: str | None = None
     last_account = None
     last_started = time.time()
     pending_retry_log: dict | None = None
@@ -975,9 +1060,11 @@ async def _stream_upstream(
                 async with client.stream("POST", url, headers=headers, json=body) as response:
                     if response.status_code != 200:
                         raw_error = await response.aread()
-                        last_error = raw_error
+                        failure, http_msg = _classify_http_status(response.status_code, raw_error)
+                        last_error = http_msg.encode("utf-8")
                         last_error_event = None
                         last_status = response.status_code
+                        last_failure = failure
                         auth_manager.mark_account_failure(account["id"], response.status_code)
                         if _is_retryable_status(response.status_code) and attempt < 2:
                             pending_retry_log = {
@@ -987,17 +1074,18 @@ async def _stream_upstream(
                                 "total_tokens": 0,
                                 "credit": 0,
                                 "status": response.status_code,
-                                "message": raw_error.decode("utf-8", "replace")[:500],
+                                "failure": failure,
+                                "message": _failure_log_message(failure, http_msg),
                                 "started": t0,
                                 "attempt": attempt,
                             }
                             continue
                         _log_request(
                             api_key_info, account, model_name, True,
-                            0, 0, 0, 0, "error", response.status_code,
-                            raw_error.decode("utf-8", "replace")[:500], t0,
+                            0, 0, 0, 0, failure, response.status_code,
+                            _failure_log_message(failure, http_msg), t0,
                         )
-                        yield _err_sse_event(raw_error, response.status_code)
+                        yield _err_sse_event(last_error, response.status_code, failure)
                         return
 
                     async for chunk in response.aiter_bytes():
@@ -1031,9 +1119,12 @@ async def _stream_upstream(
                         if stop_reading:
                             break
         except httpx.HTTPError as exc:
-            last_error = str(exc).encode("utf-8", "replace")
+            failure = FAILURE_UPSTREAM_DISCONNECT
+            http_msg = _format_httpx_error(exc)
+            last_error = http_msg.encode("utf-8")
             last_error_event = None
             last_status = 502
+            last_failure = failure
             auth_manager.mark_account_failure(account["id"], 502)
             if not output_started and attempt < 2:
                 pending_retry_log = {
@@ -1043,16 +1134,17 @@ async def _stream_upstream(
                     "total_tokens": 0,
                     "credit": 0,
                     "status": 502,
-                    "message": str(exc)[:500],
+                    "failure": failure,
+                    "message": _failure_log_message(failure, http_msg),
                     "started": t0,
                     "attempt": attempt,
                 }
                 continue
             _log_request(
                 api_key_info, account, model_name, True,
-                0, 0, 0, 0, "network_error", 502, str(exc)[:500], t0,
+                0, 0, 0, 0, failure, 502, _failure_log_message(failure, http_msg), t0,
             )
-            yield _err_sse_event(last_error, 502)
+            yield _err_sse_event(last_error, 502, failure)
             return
 
         if not stop_reading:
@@ -1075,6 +1167,7 @@ async def _stream_upstream(
 
         eof_error = observer.eof_error()
         if eof_error:
+            failure = _classify_stream_eof(observer, eof_error)
             last_error = (
                 json.dumps(observer.upstream_error_event, ensure_ascii=False).encode("utf-8")
                 if observer.upstream_error_event is not None
@@ -1082,6 +1175,7 @@ async def _stream_upstream(
             )
             last_error_event = observer.upstream_error_event
             last_status = 502
+            last_failure = failure
             auth_manager.mark_account_failure(account["id"], 502)
             if not output_started and attempt < 2:
                 pending_retry_log = {
@@ -1091,7 +1185,8 @@ async def _stream_upstream(
                     "total_tokens": observer.usage.get("total_tokens", 0),
                     "credit": observer.usage.get("credit", 0),
                     "status": 502,
-                    "message": eof_error,
+                    "failure": failure,
+                    "message": _failure_log_message(failure, eof_error),
                     "started": t0,
                     "attempt": attempt,
                 }
@@ -1102,13 +1197,13 @@ async def _stream_upstream(
                 observer.usage.get("completion_tokens", 0),
                 observer.usage.get("total_tokens", 0),
                 observer.usage.get("credit", 0),
-                "error", 502, eof_error, t0,
+                failure, 502, _failure_log_message(failure, eof_error), t0,
             )
             if observer.upstream_error_event is not None:
                 yield _json_sse_event(observer.upstream_error_event)
                 yield b"data: [DONE]\n\n"
             else:
-                yield _err_sse_event(eof_error.encode("utf-8"), 502)
+                yield _err_sse_event(eof_error.encode("utf-8"), 502, failure)
             return
 
         missing_choices = observer.missing_finish_choices()
@@ -1165,23 +1260,26 @@ async def _stream_upstream(
         "total_tokens": 0,
         "credit": 0,
         "status": last_status,
+        "failure": last_failure or "error",
         "message": last_error.decode("utf-8", "replace")[:500],
         "started": last_started,
     }
+    failure = final_failure.get("failure") or last_failure or "error"
     _log_request(
         api_key_info, final_failure["account"], model_name, True,
         final_failure["prompt_tokens"],
         final_failure["completion_tokens"],
         final_failure["total_tokens"],
         final_failure["credit"],
-        "error", final_failure["status"],
-        final_failure["message"], final_failure["started"],
+        failure, final_failure["status"],
+        _failure_log_message(failure, final_failure["message"]),
+        final_failure["started"],
     )
     if last_error_event is not None:
         yield _json_sse_event(last_error_event)
         yield b"data: [DONE]\n\n"
     else:
-        yield _err_sse_event(last_error, last_status)
+        yield _err_sse_event(last_error, last_status, failure if failure in FAILURE_CLASSES else None)
 
 
 async def _collect_stream(
@@ -1240,12 +1338,19 @@ async def _collect_stream(
                             if fn.get("arguments"):
                                 slot["arguments"] += fn["arguments"]
     except httpx.HTTPError as e:
-        return ("error", (502, {"error": {"message": f"upstream error: {e}", "type": "upstream_error"}}))
+        return (
+            "error",
+            (502, _error_payload(_format_httpx_error(e), FAILURE_UPSTREAM_DISCONNECT, 502)),
+        )
 
     if not seen_done and not finish_reason:
         return (
             "error",
-            (502, {"error": {"message": "The upstream stream ended without [DONE] or a finish reason.", "type": "upstream_error"}}),
+            (502, _error_payload(
+                "The upstream stream ended without [DONE] or a finish reason.",
+                FAILURE_INCOMPLETE_STREAM,
+                502,
+            )),
         )
 
     tcs = None
@@ -1263,7 +1368,11 @@ async def _collect_stream(
     ):
         return (
             "error",
-            (502, {"error": {"message": "The upstream stream ended before a finish reason.", "type": "upstream_error"}}),
+            (502, _error_payload(
+                "The upstream stream ended before a finish reason.",
+                FAILURE_INCOMPLETE_STREAM,
+                502,
+            )),
         )
 
     if (
@@ -1274,12 +1383,11 @@ async def _collect_stream(
     ):
         return (
             "error",
-            (502, {
-                "error": {
-                    "message": "The upstream choice ended without content, reasoning, or a tool call.",
-                    "type": "upstream_error",
-                },
-            }),
+            (502, _error_payload(
+                "The upstream choice ended without content, reasoning, or a tool call.",
+                FAILURE_INCOMPLETE_STREAM,
+                502,
+            )),
         )
 
     message = {"role": "assistant", "content": "".join(content_parts) or None}
