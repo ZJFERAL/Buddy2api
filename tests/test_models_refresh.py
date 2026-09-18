@@ -391,6 +391,18 @@ def _by_channel(result):
     return {item["channel"]: item for item in result["sources"]}
 
 
+def test_web_and_cli_version_come_from_version_py():
+    from version import VERSION
+
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+    assert "__APP_VERSION__" in html
+    assert "v2.1." not in html
+    rendered = server._render_index_html()
+    assert f"Local model gateway · v{VERSION}" in rendered
+    assert "__APP_VERSION__" not in rendered
+    assert f"Buddy 2 API v{{VERSION}}" in Path(server.__file__).read_text(encoding="utf-8")
+
+
 def test_admin_models_page_has_one_click_control():
     html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
     assert "一键读取供应模型" in html
