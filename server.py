@@ -1252,11 +1252,18 @@ async def admin_update_aliases(
 # Web UI
 # ============================================================
 
-@app.get("/")
-async def index(request: Request):
+def _render_index_html() -> str:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     html = html.replace("/* LOCAL_MODE */ false", "true" if LOCAL_MODE else "false")
-    response = HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": "frame-ancestors 'none'"})
+    return html.replace("__APP_VERSION__", VERSION)
+
+
+@app.get("/")
+async def index(request: Request):
+    response = HTMLResponse(
+        _render_index_html(),
+        headers={"Cache-Control": "no-store", "Content-Security-Policy": "frame-ancestors 'none'"},
+    )
     return response
 
 
