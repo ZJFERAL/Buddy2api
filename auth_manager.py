@@ -26,6 +26,8 @@ import fingerprint
 
 BACKEND = "https://copilot.tencent.com"
 DEFAULT_DOMAIN = "www.codebuddy.cn"
+_INTL_HOST_SUFFIX = ".workbuddy.ai"
+_INTL_CANONICAL_HOST = "www.workbuddy.ai"
 
 # 官方 Work Buddy / CodeBuddy CLI 客户端指纹（见 fingerprint.py）。
 # 兼容保留 CB_GATEWAY_USER_AGENT 覆盖；如上游不接受新 UA，
@@ -48,9 +50,30 @@ def _get_token_lock(aid: int) -> asyncio.Lock:
         return _token_locks[aid]
 
 
-def backend_url() -> str:
+def _host_from(value: str) -> str:
+    text = str(value or "").strip().lower().rstrip("/")
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    return text.split("/")[0].split(":")[0]
+
+
+def _is_intl_workbuddy_host(host: str) -> bool:
+    return host == "workbuddy.ai" or host.endswith(_INTL_HOST_SUFFIX)
+
+
+def backend_url(account: Optional[dict] = None) -> str:
+    """无账号时走设置项；国际版账号（*.workbuddy.ai）改打自己的站。"""
     value = str(db.get_setting("backend_url", BACKEND) or BACKEND).strip().rstrip("/")
-    return value if value.startswith("https://") else BACKEND
+    if not value.startswith("https://"):
+        value = BACKEND
+    if not account:
+        return value
+    host = _host_from(account.get("domain") or "")
+    if not _is_intl_workbuddy_host(host):
+        return value
+    if host == "workbuddy.ai":
+        host = _INTL_CANONICAL_HOST
+    return f"https://{host}"
 
 
 def request_timeout(default: int) -> int:
@@ -362,7 +385,7 @@ async def refresh_token(account: dict) -> bool:
     lock = _get_token_lock(aid)
     async with lock:
         headers = build_refresh_headers(account)
-        url = f"{backend_url()}/v2/plugin/auth/token/refresh"
+        url = f"{backend_url(account)}/v2/plugin/auth/token/refresh"
 
         try:
             async with httpx.AsyncClient(timeout=request_timeout(15)) as c:
@@ -678,7 +701,7 @@ async def fetch_account_resources(
 
     try:
         async with httpx.AsyncClient(timeout=request_timeout(25)) as c:
-            r = await c.post(f"{backend_url()}/v2/billing/meter/get-user-resource", headers=headers, json={})
+            r = await c.post(f"{backend_url(account)}/v2/billing/meter/get-user-resource", headers=headers, json={})
             data = r.json()
     except (httpx.HTTPError, ValueError) as e:
         return _resource_failure(
@@ -800,7 +823,7 @@ async def fetch_checkin_status(
 
     try:
         async with httpx.AsyncClient(timeout=request_timeout(20)) as c:
-            r = await c.post(f"{backend_url()}/v2/billing/meter/checkin-activity-status", headers=headers, json={})
+            r = await c.post(f"{backend_url(account)}/v2/billing/meter/checkin-activity-status", headers=headers, json={})
             data = r.json()
     except (httpx.HTTPError, ValueError) as e:
         return _checkin_failure(account, status_code=0, message=str(e)[:240], allow_stale=allow_stale)
@@ -854,7 +877,7 @@ async def claim_daily_checkin(account: dict) -> dict:
 
     try:
         async with httpx.AsyncClient(timeout=request_timeout(30)) as c:
-            r = await c.post(f"{backend_url()}/v2/billing/meter/daily-checkin", headers=headers, json={})
+            r = await c.post(f"{backend_url(account)}/v2/billing/meter/daily-checkin", headers=headers, json={})
             data = r.json()
     except (httpx.HTTPError, ValueError) as e:
         return _checkin_result(account, ok=False, status_code=0, message=str(e)[:240])

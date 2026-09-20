@@ -1304,6 +1304,25 @@ def _open_when_ready(server, url):
         webbrowser.open(url)
 
 
+def _debugger_replaced_asyncio_run() -> bool:
+    """pydevd/nest_asyncio 会换掉 asyncio.run，且不接受 uvicorn 0.52 的 loop_factory。"""
+    return getattr(asyncio.run, "__module__", "") != "asyncio.runners"
+
+
+def _serve_without_uvicorn_runner(server, listener) -> None:
+    """只在调试器换掉 asyncio.run 时绕开 Server.run，仍走 get_loop_factory。"""
+    loop_factory = server.config.get_loop_factory()
+    loop = loop_factory() if loop_factory else asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(server.serve(sockets=[listener]))
+    finally:
+        try:
+            asyncio.set_event_loop(None)
+        finally:
+            loop.close()
+
+
 def main():
     global ADMIN_TOKEN, ALLOW_NO_ADMIN_AUTH, LOCAL_MODE
 
@@ -1391,7 +1410,10 @@ def main():
     if local_host and not args.no_browser:
         threading.Thread(target=_open_when_ready, args=(server, url), daemon=True).start()
     try:
-        server.run(sockets=[listener])
+        if _debugger_replaced_asyncio_run():
+            _serve_without_uvicorn_runner(server, listener)
+        else:
+            server.run(sockets=[listener])
     finally:
         listener.close()
         instance_lock.close()

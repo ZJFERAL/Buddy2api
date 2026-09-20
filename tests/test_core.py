@@ -103,6 +103,50 @@ def test_build_backend_body_maps_developer_messages_to_system(monkeypatch):
     assert messages[0]["role"] == "developer"
 
 
+def test_build_backend_body_inserts_system_when_first_message_is_user(monkeypatch):
+    monkeypatch.delenv("CB_GATEWAY_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setattr(proxy, "resolve_model_alias", lambda model: model)
+
+    body = proxy.build_backend_body({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+
+    assert body["messages"][0] == {
+        "role": "system",
+        "content": "You are a helpful assistant.",
+    }
+    assert body["messages"][1] == {"role": "user", "content": "hello"}
+
+
+def test_build_backend_body_does_not_duplicate_existing_system(monkeypatch):
+    monkeypatch.setattr(proxy, "resolve_model_alias", lambda model: model)
+
+    body = proxy.build_backend_body({
+        "model": "auto",
+        "messages": [
+            {"role": "system", "content": "already here"},
+            {"role": "user", "content": "hello"},
+        ],
+    })
+
+    assert [message["role"] for message in body["messages"]] == ["system", "user"]
+    assert body["messages"][0]["content"] == "already here"
+
+
+@pytest.mark.parametrize("value", ["off", "none", "false", "0"])
+def test_build_backend_body_can_disable_system_injection(monkeypatch, value):
+    monkeypatch.setenv("CB_GATEWAY_SYSTEM_PROMPT", value)
+    monkeypatch.setattr(proxy, "resolve_model_alias", lambda model: model)
+
+    body = proxy.build_backend_body({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+
+    assert body["messages"] == [{"role": "user", "content": "hello"}]
+
+
 def test_audit_detector_requires_a_short_refusal_response():
     refusal = "系统检测到您当前输入的信息存在敏感内容，无法响应您的请求，请检查后重新输入。"
     quoted_in_normal_answer = (
@@ -334,7 +378,7 @@ def _collect_chat_proxy_stream(
     monkeypatch.setattr(auth_manager, "get_valid_headers", valid_headers)
     monkeypatch.setattr(auth_manager, "mark_account_success", lambda _account_id: None)
     monkeypatch.setattr(auth_manager, "mark_account_failure", lambda *_args: None)
-    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "backend_url", lambda account=None: "https://upstream.test")
     monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
     monkeypatch.setattr(proxy, "_log_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(proxy.httpx, "AsyncClient", FakeAsyncClient)
@@ -441,7 +485,7 @@ def _install_chat_account_stream_fakes(
         "mark_account_success",
         lambda account_id: calls["successes"].append(account_id),
     )
-    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "backend_url", lambda account=None: "https://upstream.test")
     monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
     monkeypatch.setattr(proxy, "_retry_delay", retry_delay)
     monkeypatch.setattr(proxy, "_log_request", record_log)
@@ -458,6 +502,82 @@ def isolated_db(tmp_path, monkeypatch):
     db.init_db()
     yield path
     credential_crypto.reset_cache()
+
+
+def test_backend_url_domestic_keeps_configured_backend(isolated_db):
+    db.set_setting("backend_url", "https://copilot.tencent.com")
+    assert auth_manager.backend_url() == "https://copilot.tencent.com"
+    assert auth_manager.backend_url({"domain": "www.codebuddy.cn"}) == "https://copilot.tencent.com"
+    assert auth_manager.backend_url({"name": "no-domain"}) == "https://copilot.tencent.com"
+    assert auth_manager.backend_url({"domain": ""}) == "https://copilot.tencent.com"
+
+
+def test_backend_url_intl_uses_workbuddy_ai(isolated_db):
+    db.set_setting("backend_url", "https://copilot.tencent.com")
+    assert auth_manager.backend_url({"domain": "www.workbuddy.ai"}) == "https://www.workbuddy.ai"
+    assert auth_manager.backend_url({"domain": "workbuddy.ai"}) == "https://www.workbuddy.ai"
+
+
+def test_test_account_chat_injects_system_and_uses_intl_backend(monkeypatch, isolated_db):
+    captured = {}
+
+    async def fake_headers(account):
+        return {"Authorization": "Bearer t"}
+
+    async def fake_collect(url, headers, body, account, api_key_info, model_name, t0):
+        captured["url"] = url
+        captured["messages"] = body["messages"]
+        return ("json", {
+            "choices": [{"message": {"content": "pong"}}],
+            "usage": {},
+            "model": "auto",
+        })
+
+    monkeypatch.delenv("CB_GATEWAY_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setattr(auth_manager, "get_valid_headers", fake_headers)
+    monkeypatch.setattr(proxy, "_collect_stream", fake_collect)
+    result = asyncio.run(proxy.test_account_chat(
+        {"id": 1, "name": "intl", "domain": "www.workbuddy.ai"},
+        "auto",
+        "ping",
+    ))
+    assert result["ok"] is True
+    assert captured["url"] == "https://www.workbuddy.ai/v2/chat/completions"
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][1] == {"role": "user", "content": "ping"}
+
+
+def test_proxy_chat_injects_system_and_uses_intl_backend(monkeypatch, isolated_db):
+    seen = {}
+    account = {"id": 1, "name": "intl", "domain": "www.workbuddy.ai"}
+
+    async def pick(_excluded):
+        return account
+
+    async def fake_headers(_account):
+        return {"Authorization": "Bearer t"}
+
+    async def fake_collect(url, headers, body, account, api_key_info, model_name, t0):
+        seen["url"] = url
+        seen["roles"] = [message.get("role") for message in body.get("messages") or []]
+        return ("json", {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {},
+        })
+
+    monkeypatch.delenv("CB_GATEWAY_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setattr(auth_manager, "pick_account_with_fallback", pick)
+    monkeypatch.setattr(auth_manager, "get_valid_headers", fake_headers)
+    monkeypatch.setattr(auth_manager, "mark_account_success", lambda *_args: None)
+    monkeypatch.setattr(proxy, "_collect_stream", fake_collect)
+    result = asyncio.run(proxy.proxy_chat_completions({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": False,
+    }))
+    assert result[0] == "json"
+    assert seen["url"] == "https://www.workbuddy.ai/v2/chat/completions"
+    assert seen["roles"][0] == "system"
 
 
 def test_encrypt_without_master_key_uses_fernet_key_file(tmp_path, monkeypatch):
@@ -3195,7 +3315,7 @@ def test_stall_retry_nonstream_uses_tool_call_result(monkeypatch, isolated_db):
     monkeypatch.setattr(auth_manager, "get_valid_headers", valid_headers)
     monkeypatch.setattr(auth_manager, "mark_account_success", lambda _id: None)
     monkeypatch.setattr(auth_manager, "mark_account_failure", lambda *_a: None)
-    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "backend_url", lambda account=None: "https://upstream.test")
     monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
 
     async def run():
@@ -3245,7 +3365,7 @@ def test_stall_retry_nonstream_keeps_first_answer_when_retry_has_no_tools(monkey
     monkeypatch.setattr(auth_manager, "get_valid_headers", valid_headers)
     monkeypatch.setattr(auth_manager, "mark_account_success", lambda _id: None)
     monkeypatch.setattr(auth_manager, "mark_account_failure", lambda *_a: None)
-    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "backend_url", lambda account=None: "https://upstream.test")
     monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
 
     async def run():
@@ -3293,7 +3413,7 @@ def test_stream_tool_loop_retries_stall_like_nonstream(monkeypatch, isolated_db)
     monkeypatch.setattr(auth_manager, "get_valid_headers", valid_headers)
     monkeypatch.setattr(auth_manager, "mark_account_success", lambda _id: None)
     monkeypatch.setattr(auth_manager, "mark_account_failure", lambda *_a: None)
-    monkeypatch.setattr(auth_manager, "backend_url", lambda: "https://upstream.test")
+    monkeypatch.setattr(auth_manager, "backend_url", lambda account=None: "https://upstream.test")
     monkeypatch.setattr(auth_manager, "request_timeout", lambda _default: 30)
 
     body = _tool_loop_body()
