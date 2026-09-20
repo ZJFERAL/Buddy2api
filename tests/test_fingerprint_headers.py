@@ -1,6 +1,14 @@
 import fingerprint
 
 
+def test_origin_for_intl_and_domestic_hosts():
+    assert fingerprint.origin_for("www.workbuddy.ai") == "https://www.workbuddy.ai"
+    assert fingerprint.origin_for("workbuddy.ai") == "https://www.workbuddy.ai"
+    assert fingerprint.origin_for("www.codebuddy.cn") == "https://www.codebuddy.cn"
+    assert fingerprint.origin_for("www.workbuddy.cn") == "https://www.codebuddy.cn"
+    assert fingerprint.origin_for("") == "https://www.codebuddy.cn"
+
+
 def test_chat_headers_include_cli_fingerprint_not_cosy_or_refresh():
     headers = fingerprint.chat_headers(
         {

@@ -55,8 +55,12 @@ def stainless_os() -> str:
 
 
 def origin_for(domain: str) -> str:
-    """按账号域选择 Origin/Referer：workbuddy.ai 国际版，否则中国版。"""
-    if "workbuddy" in (domain or "").lower():
+    """按账号域选择 Origin/Referer：*.workbuddy.ai 国际版，否则中国版。"""
+    host = (domain or "").strip().lower()
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    host = host.split("/")[0].split(":")[0]
+    if host == "workbuddy.ai" or host.endswith(".workbuddy.ai"):
         return _GLOBAL_ORIGIN
     return _CN_ORIGIN
 
