@@ -323,12 +323,14 @@ def collect_v1_models() -> list[dict]:
     wb_models = workbuddy.list_models() if workbuddy else db.get_setting("models", proxy.DEFAULT_MODELS)
     for item in wb_models:
         mid = item["id"] if isinstance(item, dict) else str(item)
+        name = (item.get("name") if isinstance(item, dict) else None) or mid
         data.append({
             "id": mid,
             "object": "model",
             "created": 0,
             "owned_by": "buddy2api",
             "channel": "workbuddy",
+            "name": name,
             **discovery_capacity(item),
         })
         data.append({
@@ -337,6 +339,7 @@ def collect_v1_models() -> list[dict]:
             "created": 0,
             "owned_by": "buddy2api",
             "channel": "workbuddy",
+            "name": name,
             **discovery_capacity(item),
         })
     for channel in providers.enabled_provider_ids():
@@ -347,12 +350,14 @@ def collect_v1_models() -> list[dict]:
             continue
         for item in provider.list_models():
             mid = item["id"] if isinstance(item, dict) else str(item)
+            name = (item.get("name") if isinstance(item, dict) else None) or mid
             data.append({
                 "id": f"{channel}/{mid}",
                 "object": "model",
                 "created": 0,
                 "owned_by": "buddy2api",
                 "channel": channel,
+                "name": name,
                 **discovery_capacity(item),
             })
     return data
@@ -774,6 +779,49 @@ async def admin_test_account(
         default_prompt = "请回复：pong" if channel == "traework" else "ping"
         return await test(account, model or "auto", prompt or default_prompt)
     return await proxy.test_account_chat(account, model or "auto", prompt or "ping")
+
+
+@app.get("/admin/qoder/session")
+async def admin_qoder_session(authorization: str | None = Header(default=None)):
+    """Identity currently logged in with the Qoder CLI (global auth dir)."""
+    _check_admin(authorization)
+    from providers.qoderwork import manage
+
+    return manage.current_login()
+
+
+@app.get("/admin/qoder/accounts")
+async def admin_qoder_accounts(authorization: str | None = Header(default=None)):
+    """Every qoderwork account with its snapshot dir and token lifetime."""
+    _check_admin(authorization)
+    from providers.qoderwork import manage
+
+    return {"accounts": manage.list_accounts(), "login": manage.current_login(),
+            "snapshot_root": str(manage.SNAPSHOT_ROOT)}
+
+
+@app.post("/admin/qoder/capture")
+async def admin_qoder_capture(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    """Copy the current Qoder CLI login into an account snapshot and refresh it."""
+    _check_admin(authorization)
+    from providers.qoderwork.manage import QoderManageError, capture
+
+    data = await _read_json_object(request, allow_empty=True)
+    account_id = data.get("account_id")
+    name = data.get("name")
+    try:
+        return await run_in_threadpool(
+            capture,
+            int(account_id) if account_id not in (None, "") else None,
+            str(name).strip() if name else None,
+        )
+    except QoderManageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/admin/accounts/{aid}/resources")

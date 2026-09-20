@@ -132,7 +132,12 @@ def discover(channel: str | None = None, auth_dir: str | None = None) -> dict:
     discover_fn = getattr(provider, "discover", None)
     if discover_fn is None:
         raise ValueError(f"Channel '{channel}' does not support discover")
-    payload = discover_fn()
+    try:
+        # qoderwork accepts an auth_dir (multi-account copies); other channels
+        # keep the no-arg signature.
+        payload = discover_fn(auth_dir)
+    except TypeError:
+        payload = discover_fn()
     if not isinstance(payload, dict):
         payload = {"files": [], "dirs": []}
     files = payload.get("files") or []

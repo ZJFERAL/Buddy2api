@@ -1,6 +1,6 @@
 @echo off
 chcp 936 >nul
-setlocal
+setlocal enabledelayedexpansion
 
 REM ---- 一键启动 Buddy2api（自包含，不依赖 Client2API / AIClient2API）----
 REM ---- 静默执行：无 hidden 参数时，用 vbs 以无窗口方式重启自身 ----
@@ -17,6 +17,12 @@ REM ---- 端口 / 主机 / 管理台鉴权（按需修改）----
 set "BUDDY_PORT=8787"
 set "BUDDY_HOST=0.0.0.0"
 set "BUDDY_AUTH=--admin-token cb-admin-Zr491Q_rKVcTlbiyST2gaY_sADFn3gX9"
+
+REM ---- Qoder 多账号：全局登录 + %USERPROFILE%\.qoder\snapshots\<name>\.auth 快照 ----
+set "CB_QODER_AUTH_DIRS=%USERPROFILE%\.qoder\.auth"
+for /d %%d in ("%USERPROFILE%\.qoder\snapshots\*") do (
+  if exist "%%d\.auth" set "CB_QODER_AUTH_DIRS=!CB_QODER_AUTH_DIRS!;%%d\.auth"
+)
 
 set "LOG_DIR=%~dp0logs"
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"

@@ -85,3 +85,7 @@ desktop.ini
 
 # Ant Code composer uploads
 ant-code-uploads/
+
+# Qoder per-account auth snapshots (SECRETS - never commit)
+.qoder-auth/
+QODERWORK_PLAN.md

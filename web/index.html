@@ -689,6 +689,7 @@ createApp({
 </div>`
 }).component('accs',{props:['token','toast'],setup(p){
   const l=ref([]),ld=ref(true),sa=ref(false),ai=ref(''),nm=ref(''),disc=ref(null),dl=ref(false),scanning=ref(false),adding=ref(false),authPath=ref(''),test=ref(null),claim=ref(null),pkg=ref(null),tl=ref(0),claimingAll=ref(false),officialRefreshing=ref(false),checkins=ref({}),checkinSummary=ref(null),checkinLoading=ref(false),busy=ref({}),discChannel=ref('workbuddy'),channels=ref([{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}]),catalogs=ref({}),importSummary=ref([]);
+  const qd=ref([]),qdLogin=ref(null),qdBusy=ref(false),qdName=ref(''),qdRoot=ref('');
   const filters=reactive({q:'',status:'all',claim:'all',sort:'priority'});
   function hydrate(a){return {...a,_weight:a.weight||1,_priority:a.priority||0,_creditSnapshot:a.credit_snapshot||a.credit_limit||0,_baseWeight:a.weight||1,_basePriority:a.priority||0,_baseCreditSnapshot:a.credit_snapshot||a.credit_limit||0}}
   function dirty(a){return Number(a._weight||1)!==Number(a._baseWeight||1)||Number(a._priority||0)!==Number(a._basePriority||0)||Number(a._creditSnapshot||0)!==Number(a._baseCreditSnapshot||0)}
@@ -783,10 +784,40 @@ createApp({
   function expireText(x){if(x.expired)return '已过期';if(x.days_to_expire===null||x.days_to_expire===undefined)return x.expire_time||'长期';if(x.days_to_expire<0)return '已过期';if(x.days_to_expire<=7)return x.days_to_expire+' 天内';return shortTime(x.expire_time)}
   function pkgBadge(x){if(x.expired)return 'err';if(Number(x.days_to_expire)>=0&&Number(x.days_to_expire)<=7)return 'inactive';return 'ok'}
   function clearPath(){authPath.value='';discover('')}
-  onMounted(()=>{loadChannels();loadCatalogs();load(true);discover()});return{l,visibleAccounts,filters,ld,sa,ai,nm,disc,dl,scanning,adding,authPath,test,testModels,claim,pkg,tl,claimingAll,officialRefreshing,checkins,checkinSummary,checkinLoading,busyKey,dirty,load,loadCheckins,discover,scan,importSummary,add,ref2,saveMeta,toggle,openTest,closeTest,runTest,claimOne,claimAll,refreshAllResources,openPackages,refreshPackages,del,fmt,size,credit,tok,creditPct,claimText,officialBalance,officialHasValue,officialMain,officialMeta,cacheAge,officialWarn,checkinClass,checkinText,tokenLife,shortTime,expireText,pkgBadge,clearPath,I,discChannel,channels}
+  async function loadQoder(){try{const r=await api.get('/admin/qoder/accounts',p.token);qd.value=r.accounts||[];qdLogin.value=r.login||null;qdRoot.value=r.snapshot_root||''}catch(e){qd.value=[];qdLogin.value=null}}
+  async function captureQoder(a){if(qdBusy.value)return;qdBusy.value=true;try{const r=await api.post('/admin/qoder/capture',{account_id:a.id},p.token);p.toast('已刷新 '+(r.name||'')+'，有效期至 '+fmt(r.expires_at),'ok');await loadQoder();await load()}catch(e){p.toast(apiErr(e,'捕获失败'),'err')}qdBusy.value=false}
+  async function adoptQoder(){const n=qdName.value.trim();if(qdBusy.value||!n)return;qdBusy.value=true;try{const r=await api.post('/admin/qoder/capture',{name:n},p.token);p.toast('已纳管 '+(r.name||'')+' · uid '+String(r.uid||'').slice(0,8),'ok');qdName.value='';await loadQoder();await load()}catch(e){p.toast(apiErr(e,'纳管失败'),'err')}qdBusy.value=false}
+  function qdLife(a){const h=Number(a.remaining_hours);if(a.remaining_hours==null||a.remaining_hours===undefined)return '未知';if(h<=0)return '已过期';if(h>=24)return Math.floor(h/24)+' 天 '+Math.floor(h%24)+'h';return h+'h'}
+  function qdClass(a){if(a.expired)return 'err';if(a.expiring_soon)return 'warn';return 'ok'}
+  function qdShort(p){if(!p)return '-';const s=String(p).replace(/\\/g,'/');const i=s.indexOf('.qoder/snapshots/');return i>=0?s.slice(i+7):s}
+  onMounted(()=>{loadChannels();loadCatalogs();load(true);discover();loadQoder()});return{l,visibleAccounts,filters,ld,sa,ai,nm,disc,dl,scanning,adding,authPath,test,testModels,claim,pkg,tl,claimingAll,officialRefreshing,checkins,checkinSummary,checkinLoading,busyKey,dirty,load,loadCheckins,discover,scan,importSummary,add,ref2,saveMeta,toggle,openTest,closeTest,runTest,claimOne,claimAll,refreshAllResources,openPackages,refreshPackages,del,fmt,size,credit,tok,creditPct,claimText,officialBalance,officialHasValue,officialMain,officialMeta,cacheAge,officialWarn,checkinClass,checkinText,tokenLife,shortTime,expireText,pkgBadge,clearPath,I,discChannel,channels,qd,qdLogin,qdBusy,qdName,qdRoot,loadQoder,captureQoder,adoptQoder,qdLife,qdClass,qdShort}
 },template:`
 <div>
   <div class="phead"><h1>账号管理</h1><p>粘性主账号 · 失败自动切换</p></div>
+  <div class="card">
+    <div class="card-h">Qoder 多账号<span class="sub">自动续期 · 换号时才需 CLI 登录</span></div>
+    <div class="card-p">
+      <div class="hint" style="margin-bottom:8px">当前 Qoder 登录：<b v-if="qdLogin&&qdLogin.ok">{{qdLogin.name||qdLogin.uid}}</b><b v-else>未检测到登录</b><span v-if="qdLogin&&qdLogin.ok" class="mono"> · uid {{String(qdLogin.uid).slice(0,8)}} · 有效期至 {{fmt(qdLogin.expires_at)}}</span></div>
+      <table class="mini-table" v-if="qd&&qd.length"><thead><tr><th>账号</th><th>uid</th><th>快照目录</th><th>剩余</th><th>来源</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-for="a in qd" :key="a.id">
+            <td>{{a.name||'-'}}</td>
+            <td class="mono">{{String(a.uid||'').slice(0,8)}}</td>
+            <td class="mono">{{qdShort(a.auth_dir)}}</td>
+            <td>{{qdLife(a)}}</td>
+            <td><span class="badge" :class="qdClass(a)">{{a.is_global?'跟随 CLI':'自动续期'}}</span></td>
+            <td><button class="btn s" :disabled="qdBusy" @click="captureQoder(a)" title="仅在自动续期失败/换号时使用：把 Qoder CLI 当前登录重新录入该账号（uid 不符会拒绝）">{{qdBusy?'处理中':'重新录入（CLI 登录）'}}</button></td>
+          </tr>
+        </tbody></table>
+      <div class="empty" v-else>还没有 Qoder 账号，先在 Qoder CLI 登录，再用下方「纳管」</div>
+      <div class="field" style="margin-top:8px"><label>纳管为</label><input v-model="qdName" placeholder="新账号名，如 acc3" :disabled="qdBusy"/></div>
+      <div class="detect-actions" style="margin-top:8px">
+        <button class="btn s pri" :disabled="qdBusy||!qdName.trim()" @click="adoptQoder()">纳管当前登录为新账号</button>
+        <button class="btn s" :disabled="qdBusy" @click="loadQoder()">刷新状态</button>
+      </div>
+      <div class="hint">保活：账号 token 每 30 天自动走服务端接口续期（refresh 链约 360 天），<b>平时无需任何操作，也不需要 Qoder CLI 登录着</b>。「重新录入」仅在两种情况使用：① 续期失败/refresh_token 过期（约一年）——先在 Qoder CLI 登录该账号，再点该行按钮；② 下方「纳管」把 CLI 当前登录注册为新账号。录入时若 CLI 登录的账号与目标不符，会提示 uid 不一致并拒绝覆盖。</div>
+    </div>
+  </div>
   <div class="card">
     <div class="card-h">本机登录检测<span class="sub">只显示文件信息，不显示 token</span></div>
     <div class="card-p">
@@ -857,7 +888,7 @@ createApp({
   <div class="ov" v-if="sa" @click.self="sa=false"><div class="modal"><div class="modal-h"><h3>高级手动添加</h3><button class="x" @click="sa=false">&times;</button></div><div class="modal-b"><div class="field"><label>名称</label><input v-model="nm" placeholder="可选"/></div><div class="field"><label>Auth JSON</label><textarea v-model="ai" placeholder="粘贴 .info 文件内容"></textarea><div class="hint">只有自动检测失败时才需要手动粘贴完整 JSON。</div></div></div><div class="modal-f"><button class="btn" @click="sa=false" :disabled="adding">取消</button><button class="btn pri" @click="add" :disabled="adding">{{adding?'添加中':'添加'}}</button></div></div></div>
 </div>`
 }).component('keys',{props:['token','toast'],setup(p){
-  const l=ref([]),ld=ref(true),sa=ref(false),f=reactive({name:'',models:'',limit:null,preset:'custom',channel:'workbuddy'}),res=ref(''),saving=ref(false),copied=ref(false),busy=ref({}),shown=ref({}),codexResult=ref(null),codexBusy=ref(false),channels=ref([{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}]);
+  const l=ref([]),ld=ref(true),sa=ref(false),f=reactive({name:'',models:'',limit:null,preset:'custom',channel:'workbuddy'}),res=ref(''),saving=ref(false),copied=ref(false),busy=ref({}),shown=ref({}),codexResult=ref(null),codexBusy=ref(false),channels=ref([{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'},{id:'qoderwork',display_name:'Qoder / Qoder CLI'}]);
   const clientTypes=[
     {k:'custom',name:'默认',icon:'⚙'},
     {k:'codex',name:'Codex',icon:'◉'},
@@ -937,7 +968,7 @@ createApp({
 </div>`
 }).component('mdls',{props:['token','toast'],setup(p){
   const al=ref({}),builtinKeys=ref({}),aliasChannel=ref('workbuddy'),ld=ref(true),sources=ref([]),syncing=ref(false),adding=ref(false),addOpen=ref(false);
-  const FALLBACK_CH=[{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'}];
+  const FALLBACK_CH=[{id:'workbuddy',display_name:'WorkBuddy'},{id:'qclaw',display_name:'QClaw'},{id:'qwenwork',display_name:'QwenWork / 千问办公'},{id:'traework',display_name:'TraeWork'},{id:'qoderwork',display_name:'Qoder / Qoder CLI'}];
   const addForm=reactive({channel:'workbuddy',id:'',name:''});
   const newKey=ref(''),newVal=ref('');
   const channels=computed(()=>sources.value.length?sources.value.map(s=>({id:s.channel,display_name:s.display_name||s.channel})):FALLBACK_CH);
