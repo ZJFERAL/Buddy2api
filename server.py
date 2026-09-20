@@ -318,6 +318,7 @@ async def health():
 def collect_v1_models() -> list[dict]:
     """Aggregate per-channel catalogs for GET /v1/models. WorkBuddy is bare + namespaced."""
     from model_capacity import discovery_capacity
+    from model_reasoning import discovery_reasoning
     data = []
     workbuddy = providers.get_provider("workbuddy")
     wb_models = workbuddy.list_models() if workbuddy else db.get_setting("models", proxy.DEFAULT_MODELS)
@@ -330,6 +331,7 @@ def collect_v1_models() -> list[dict]:
             "owned_by": "buddy2api",
             "channel": "workbuddy",
             **discovery_capacity(item),
+            **discovery_reasoning(item),
         })
         data.append({
             "id": f"workbuddy/{mid}",
@@ -338,6 +340,7 @@ def collect_v1_models() -> list[dict]:
             "owned_by": "buddy2api",
             "channel": "workbuddy",
             **discovery_capacity(item),
+            **discovery_reasoning(item),
         })
     for channel in providers.enabled_provider_ids():
         if channel == "workbuddy":
@@ -354,6 +357,7 @@ def collect_v1_models() -> list[dict]:
                 "owned_by": "buddy2api",
                 "channel": channel,
                 **discovery_capacity(item),
+                **discovery_reasoning(item),
             })
     return data
 
@@ -1248,11 +1252,18 @@ async def admin_update_aliases(
 # Web UI
 # ============================================================
 
-@app.get("/")
-async def index(request: Request):
+def _render_index_html() -> str:
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     html = html.replace("/* LOCAL_MODE */ false", "true" if LOCAL_MODE else "false")
-    response = HTMLResponse(html, headers={"Cache-Control": "no-store", "Content-Security-Policy": "frame-ancestors 'none'"})
+    return html.replace("__APP_VERSION__", VERSION)
+
+
+@app.get("/")
+async def index(request: Request):
+    response = HTMLResponse(
+        _render_index_html(),
+        headers={"Cache-Control": "no-store", "Content-Security-Policy": "frame-ancestors 'none'"},
+    )
     return response
 
 
@@ -1291,6 +1302,25 @@ def _open_when_ready(server, url):
         time.sleep(0.1)
     if server.started:
         webbrowser.open(url)
+
+
+def _debugger_replaced_asyncio_run() -> bool:
+    """pydevd/nest_asyncio 会换掉 asyncio.run，且不接受 uvicorn 0.52 的 loop_factory。"""
+    return getattr(asyncio.run, "__module__", "") != "asyncio.runners"
+
+
+def _serve_without_uvicorn_runner(server, listener) -> None:
+    """只在调试器换掉 asyncio.run 时绕开 Server.run，仍走 get_loop_factory。"""
+    loop_factory = server.config.get_loop_factory()
+    loop = loop_factory() if loop_factory else asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(server.serve(sockets=[listener]))
+    finally:
+        try:
+            asyncio.set_event_loop(None)
+        finally:
+            loop.close()
 
 
 def main():
@@ -1380,7 +1410,10 @@ def main():
     if local_host and not args.no_browser:
         threading.Thread(target=_open_when_ready, args=(server, url), daemon=True).start()
     try:
-        server.run(sockets=[listener])
+        if _debugger_replaced_asyncio_run():
+            _serve_without_uvicorn_runner(server, listener)
+        else:
+            server.run(sockets=[listener])
     finally:
         listener.close()
         instance_lock.close()
