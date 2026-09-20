@@ -290,6 +290,32 @@ def _configured_reasoning_default(model: str) -> str | None:
     return value if value in _VALID_REASONING_DEFAULTS else None
 
 
+# 上游要求第一条消息必须是 system，否则 11128 first message is not system prompt。
+# CB_GATEWAY_SYSTEM_PROMPT 可覆盖文案；off/none/false/0 关闭注入。
+_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+_SYSTEM_PROMPT_DISABLED = {"off", "none", "false", "0", ""}
+
+
+def _fallback_system_prompt() -> str:
+    value = os.environ.get("CB_GATEWAY_SYSTEM_PROMPT")
+    if value is None:
+        return _DEFAULT_SYSTEM_PROMPT
+    value = value.strip()
+    return "" if value.lower() in _SYSTEM_PROMPT_DISABLED else value
+
+
+def _ensure_leading_system_message(messages):
+    if not isinstance(messages, list) or not messages:
+        return messages
+    first = messages[0]
+    if isinstance(first, dict) and first.get("role") == "system":
+        return messages
+    prompt = _fallback_system_prompt()
+    if not prompt:
+        return messages
+    return [{"role": "system", "content": prompt}, *messages]
+
+
 def build_backend_body(payload: dict) -> dict:
     reasoning_control = resolve_reasoning_control(payload)
     body = {k: payload[k] for k in PASSTHROUGH_BODY_KEYS if k in payload}
@@ -304,6 +330,8 @@ def build_backend_body(payload: dict) -> dict:
             else message
             for message in messages
         ]
+        # 角色归一化之后再补 system，避免 developer 被映射成 system 时重复插入
+        body["messages"] = _ensure_leading_system_message(body["messages"])
     # Resolve model alias before forwarding
     raw_model = body.get("model", "auto")
     body["model"] = resolve_model_alias(raw_model)
@@ -840,7 +868,7 @@ async def _json_chat_with_stall_retry(
             auth_manager.mark_account_failure(account["id"], 401)
             continue
 
-        url = f"{auth_manager.backend_url()}/v2/chat/completions"
+        url = f"{auth_manager.backend_url(account)}/v2/chat/completions"
         t0 = time.time()
         result = await _collect_stream(url, headers, body, account, api_key_info, model_name, t0)
         if result[0] == "json":
@@ -961,7 +989,7 @@ async def test_account_chat(account: dict, model: str = "auto", prompt: str = "p
         "messages": [{"role": "user", "content": prompt or "ping"}],
         "stream": False,
     })
-    url = f"{auth_manager.backend_url()}/v2/chat/completions"
+    url = f"{auth_manager.backend_url(account)}/v2/chat/completions"
     t0 = time.time()
     result = await _collect_stream(url, headers, body, account, None, f"account-test:{model or 'auto'}", t0)
     duration_ms = int((time.time() - t0) * 1000)
@@ -1039,7 +1067,7 @@ async def _stream_upstream(
             last_status = 401
             continue
 
-        url = f"{auth_manager.backend_url()}/v2/chat/completions"
+        url = f"{auth_manager.backend_url(account)}/v2/chat/completions"
         t0 = time.time()
         last_started = t0
         observer = _ChatStreamObserver(body.get("model") or model_name, body.get("n", 1))

@@ -80,6 +80,63 @@ def test_client_api_key_is_still_required(local_mode, monkeypatch):
     assert request("/v1/models", headers={"Origin": "http://localhost:3000", "Sec-Fetch-Site": "cross-site"}).status_code == 401
 
 
+def test_stock_asyncio_run_uses_uvicorn_runner():
+    assert server._debugger_replaced_asyncio_run() is False
+
+
+def test_debugger_patched_asyncio_run_is_detected():
+    class Patched:
+        def __call__(self, *args, **kwargs):
+            raise AssertionError("should not be called")
+
+    patched = Patched()
+    patched.__module__ = "pydevd_nest_asyncio"
+    original = server.asyncio.run
+    server.asyncio.run = patched
+    try:
+        assert server._debugger_replaced_asyncio_run() is True
+    finally:
+        server.asyncio.run = original
+
+
+def test_debugger_fallback_drives_the_loop_directly(monkeypatch):
+    events = []
+
+    class FakeLoop:
+        def run_until_complete(self, coro):
+            events.append("run_until_complete")
+            try:
+                coro.send(None)
+            except StopIteration:
+                pass
+
+        def close(self):
+            events.append("close")
+
+    class FakeConfig:
+        def get_loop_factory(self):
+            events.append("loop_factory")
+            return FakeLoop
+
+    class FakeServer:
+        config = FakeConfig()
+
+        async def serve(self, sockets=None):
+            events.append(("serve", sockets))
+
+    monkeypatch.setattr(server.asyncio, "set_event_loop", lambda loop: events.append("set_event_loop"))
+    listener = object()
+    server._serve_without_uvicorn_runner(FakeServer(), listener)
+    assert events == [
+        "loop_factory",
+        "set_event_loop",
+        "run_until_complete",
+        ("serve", [listener]),
+        "set_event_loop",
+        "close",
+    ]
+
+
 def test_database_lock_releases_after_close(tmp_path, monkeypatch):
     monkeypatch.setattr(server.db, "DB_PATH", tmp_path / "test.db")
     first = server._lock_database()
