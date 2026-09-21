@@ -15,8 +15,9 @@ from providers.qoderwork import PROVIDER as QODERWORK_PROVIDER
 from providers.qwenwork import PROVIDER as QWENWORK_PROVIDER
 from providers.traework import PROVIDER as TRAEWORK_PROVIDER
 from providers.workbuddy import PROVIDER as WORKBUDDY_PROVIDER
+from providers.zcode import PROVIDER as ZCODE_PROVIDER
 
-DEFAULT_PROVIDER_IDS: tuple[str, ...] = ("workbuddy", "qclaw", "qwenwork", "traework", "qoderwork")
+DEFAULT_PROVIDER_IDS: tuple[str, ...] = ("workbuddy", "qclaw", "qwenwork", "traework", "qoderwork", "zcode")
 
 _LOADED: dict[str, Provider] = {
     "workbuddy": WORKBUDDY_PROVIDER,
@@ -24,6 +25,7 @@ _LOADED: dict[str, Provider] = {
     "qwenwork": QWENWORK_PROVIDER,
     "traework": TRAEWORK_PROVIDER,
     "qoderwork": QODERWORK_PROVIDER,
+    "zcode": ZCODE_PROVIDER,
 }
 
 

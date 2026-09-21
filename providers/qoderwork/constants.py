@@ -129,7 +129,10 @@ ALIASES = {
 }
 
 # Status codes worth retrying on (mirrors qwenwork).
-RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+# 402 Payment Required 也归到「换个账号再来」：额度类错误常以 402 出现
+# （quota exceeded），换号即可，不该直接吐给客户端。语义归类见
+# auth_manager.classify_failover（400 + 额度/模型文案同样会触发换号）。
+RETRYABLE_STATUS = {402, 408, 409, 425, 429, 500, 502, 503, 504}
 
 # Route selection: the four built-ins are served by the OpenAI-compatible
 # endpoint (plain Bearer); every other model requires the native COSY-signed

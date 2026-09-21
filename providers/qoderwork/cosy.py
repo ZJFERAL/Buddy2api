@@ -27,7 +27,7 @@ NATIVE_INFER_QUERY = "?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
 COSY_SIGNED_PATH = "/api/v2/service/pro/sse/agent_chat_generation"  # md5 uses this (no /algo)
 NATIVE_INFER_URL = INFER_HOST + NATIVE_INFER_PATH + NATIVE_INFER_QUERY
 
-COSY_VERSION = "1.1.34"  # qoderProtocolVersion
+COSY_VERSION = "0.3.4"  # qoderProtocolVersion
 
 # Default scene (qodercli2api defaultProtocolScene)
 SCENE_CLIENT_TYPE = "5"

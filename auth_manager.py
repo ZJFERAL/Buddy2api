@@ -83,12 +83,150 @@ def request_timeout(default: int) -> int:
         return default
 
 
-def mark_account_success(aid: int):
+# ============================================================
+# 上游错误归类 → 换号决策
+# ============================================================
+# 有些 4xx 并不是「这次请求有问题」，而是「这个账号有问题」：额度用光了，
+# 或者没有某个模型的权限。这类错误在 HTTP 码上往往就是 400/402，直接返回给
+# 客户端等于白白浪费掉池子里的其它账号。归好类之后 provider 层就能
+# 「标记本账号 + 换下一个重试」，而不是把错误原样抛出去。
+FAILOVER_QUOTA = "quota"    # 本账号额度耗尽（含 HTTP 402）
+FAILOVER_MODEL = "model"    # 本账号没有该模型的权限
+
+MODEL_BLOCK_TTL = 1800       # 模型权限类问题的屏蔽时长（30 分钟）
+QUOTA_BLOCK_TTL = 6 * 3600   # 额度隔离时长；写进 extra，重启后依然有效
+
+_QUOTA_MARKERS = (
+    "billing daily count exceeded",
+    "quota exceeded", "quota exhausted", "exceeded your quota", "exceed your quota",
+    "insufficient quota", "insufficient balance", "insufficient credit",
+    "out of credit", "no available credit", "credit exhausted", "credits exhausted",
+    "usage limit reached", "exceeded the usage limit", "payment required",
+    "余额不足", "额度不足", "额度已用完", "额度耗尽",
+    # 上游临时不可用（换号可解）
+    "first token timeout", "upstream timeout", "timeout",
+    "upstream unavailable", "service unavailable", "temporarily unavailable",
+    "503", "504", "gateway timeout",
+    # 连接/流式层面的失败（换号可解）
+    "stream failed", "stream interrupted", "connection reset",
+    "connection refused", "connection aborted", "connection dropped",
+    "read timeout", "read timed out", "write timeout", "operation timed out",
+    "client disconnect", "client disconnected",
+)
+
+_MODEL_MARKERS = (
+    "cannot find model", "unsupported model", "model not found", "unknown model",
+    "invalid model", "model does not exist", "model not exist",
+    "model access denied", "no access to the model", "no access to this model",
+    "no permission to use the model", "not authorized to use the model",
+    "模型不存在", "不支持的模型", "无权限使用该模型",
+)
+
+_model_blocks: dict[tuple[str, int, str], float] = {}
+
+
+def classify_failover(status_code: int = 0, error_msg: str = "") -> Optional[str]:
+    """判断一个上游错误是否「换号可解」，返回 FAILOVER_QUOTA / FAILOVER_MODEL。
+
+    返回 None 表示这是请求本身的问题（参数错、内容被拒…），换号也没用，
+    应当直接把错误吐给客户端，免得连续消耗其它账号。
+    """
+    text = (error_msg or "").lower()
+    if status_code == 402:
+        return FAILOVER_QUOTA
+    if status_code not in (400, 403):
+        return None
+    if any(marker in text for marker in _QUOTA_MARKERS):
+        return FAILOVER_QUOTA
+    if any(marker in text for marker in _MODEL_MARKERS):
+        return FAILOVER_MODEL
+    return None
+
+
+def _block_alive(store: dict, key) -> bool:
+    """带 TTL 的屏蔽探针。调用方需持有 _failure_lock。"""
+    until = store.get(key)
+    if not until:
+        return False
+    if until <= time.monotonic():
+        store.pop(key, None)
+        return False
+    return True
+
+
+def account_model_blocked(aid: int, provider: str = "workbuddy", model: str = "") -> bool:
+    """该账号是否被上游拒绝过这个模型（缺权限），隔离期内不再派给它。
+
+    只按 (provider, 账号, 模型) 屏蔽 —— 账号本身没坏，换个模型照样能用，
+    所以绝不能把账号整体下架。
+    """
+    if not model:
+        return False
+    with _failure_lock:
+        return _block_alive(_model_blocks, (provider, aid, model))
+
+
+def account_quota_blocked(account: Optional[dict] = None, aid: int = 0) -> bool:
+    """额度耗尽被下架的账号是否仍在隔离期。
+
+    只在 `status=expired` 时生效：人工把账号重新启用（status 改回 active）
+    即视为解除隔离。没有这层判断，provider 里「刷新过期账号」的兜底逻辑会把
+    额度已空的账号重新捞回池子 —— token 确实能刷新成功，但额度还是空的。
+    """
+    if account is None and aid:
+        account = db.get_account(aid)
+    account = account or {}
+    if str(account.get("status") or "") != "expired":
+        return False
+    extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
+    return float(extra.get("quota_blocked_until") or 0) > time.time()
+
+
+def account_blocked_for(account: dict, provider: str = "workbuddy", model: str = "") -> bool:
+    """账号是否被隔离（额度耗尽 / 该模型无权限）。"""
+    if account_quota_blocked(account):
+        return True
+    try:
+        aid = int(account.get("id") or 0)
+    except (TypeError, ValueError):
+        return False
+    return account_model_blocked(aid, provider, model)
+
+
+def mark_account_success(aid: int, provider: str = "", model: str = ""):
+    """成功后清掉熔断记录；刚成功过的模型也解除屏蔽（说明其实有权限）。"""
     with _failure_lock:
         _account_failures.pop(aid, None)
+        if provider and model:
+            _model_blocks.pop((provider, aid, model), None)
 
 
-def mark_account_failure(aid: int, status_code: int = 0):
+def mark_account_failure(aid: int, status_code: int = 0, error_msg: str = "",
+                         provider: str = "", model: str = ""):
+    """记录一次账号失败，按上游错误的性质决定隔离方式。
+
+    * 额度类（FAILOVER_QUOTA）→ 本账号这个周期已经用光：`status=expired`
+      下架，并把隔离到期时间写进 `extra.quota_blocked_until`（跨重启有效）。
+    * 模型权限类（FAILOVER_MODEL）→ 只屏蔽 (provider, 账号, 模型) 这个组合，
+      账号本身仍然健康，其它模型照常使用。
+    * 其它 → 保持原逻辑：指数退避冷却；401/403 直接下架。
+    """
+    kind = classify_failover(status_code, error_msg)
+    if kind == FAILOVER_QUOTA:
+        account = db.get_account(aid) or {}
+        extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
+        patched = dict(extra)
+        patched["quota_blocked_until"] = int(time.time() + QUOTA_BLOCK_TTL)
+        patched["quota_blocked_reason"] = (error_msg or "")[:200]
+        with _failure_lock:
+            _account_failures.pop(aid, None)
+        db.update_account(aid, {"status": "expired", "extra": patched})
+        return
+    if kind == FAILOVER_MODEL:
+        with _failure_lock:
+            _model_blocks[(provider, aid, model)] = time.monotonic() + MODEL_BLOCK_TTL
+            _account_failures.pop(aid, None)
+        return
     with _failure_lock:
         count, _ = _account_failures.get(aid, (0, 0.0))
         count += 1
@@ -950,13 +1088,20 @@ def _set_sticky_account(aid: int, provider: str = "workbuddy"):
         _sticky_account_id[provider] = aid
 
 
-def pick_account(exclude_ids: set[int] = None, provider: str = "workbuddy") -> Optional[dict]:
-    """选择一个可用账号。优先级越高越先用，同优先级尽量粘住当前账号。"""
+def pick_account(exclude_ids: set[int] = None, provider: str = "workbuddy",
+                 model: str = "") -> Optional[dict]:
+    """选择一个可用账号。优先级越高越先用，同优先级尽量粘住当前账号。
+
+    `model` 非空时会跳过「已被上游判定没有该模型权限」的账号：账号没坏，
+    只是这个模型用不了，其它模型仍然应该给它用（见 FAILOVER_MODEL）。
+    """
     exclude_ids = exclude_ids or set()
     accounts = db.get_active_accounts(provider)
     candidates = [
         a for a in accounts
-        if a["id"] not in exclude_ids and not account_is_cooling_down(a["id"])
+        if a["id"] not in exclude_ids
+        and not account_is_cooling_down(a["id"])
+        and not account_blocked_for(a, provider, model)
     ]
     if not candidates:
         return None

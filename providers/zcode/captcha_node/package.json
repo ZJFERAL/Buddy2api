@@ -1,0 +1,10 @@
+{
+  "name": "zcode-captcha-node",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Aliyun traceless captcha solver for zcode channel (happy-dom stubs)",
+  "main": "solver.js",
+  "dependencies": {
+    "happy-dom": "^20.11.6"
+  }
+}

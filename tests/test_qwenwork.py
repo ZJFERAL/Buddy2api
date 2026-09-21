@@ -9,7 +9,7 @@ import providers
 import router
 from providers.protocol import UnknownChannel, UnknownModel
 from providers.qwenwork import cosy
-from providers.qwenwork.chat import build_body, envelope_error, unwrap_sse_payload
+from providers.qwenwork.chat import build_body, envelope_error, envelope_status, unwrap_sse_payload
 from providers.qwenwork.constants import COSY_VERSION, COSY_VERSION_FROZEN, RSA_PUBLIC_KEY_PEM, STATIC_MODELS
 from providers.qwenwork.store import parse_credentials, qwenwork_auth_dirs
 
@@ -34,7 +34,9 @@ def qwen_enabled(monkeypatch):
 
 def test_qwenwork_in_default_registry(monkeypatch):
     monkeypatch.delenv("CB_GATEWAY_PROVIDERS", raising=False)
-    assert providers.enabled_provider_ids() == ["workbuddy", "qclaw", "qwenwork", "traework"]
+    assert providers.enabled_provider_ids() == [
+        "workbuddy", "qclaw", "qwenwork", "traework", "qoderwork", "zcode",
+    ]
     assert providers.get_provider("qwenwork") is not None
     assert "qwenwork" in providers._LOADED
 
@@ -156,6 +158,28 @@ def test_envelope_error_from_outer_400():
     raw = '{"headers":{},"body":"{\\"code\\":\\"400\\",\\"message\\":\\"Invalid agent chat JSON body\\"}","statusCodeValue":400}'
     assert "Invalid agent chat JSON body" in (envelope_error(raw) or "")
     assert unwrap_sse_payload(raw) == []
+
+
+def test_envelope_status_reports_upstream_verdict():
+    """The transport always answers 200; the verdict is in statusCodeValue.
+
+    Regression guard: the adapter used to hardcode 400 for every envelope error,
+    which both mislabelled the 2026-09-21 ``Model catalog unavailable`` outage
+    (really 503) and disabled RETRYABLE_STATUS handling for it.
+    """
+    catalog = '{"headers":{},"body":"{\\"code\\":\\"503\\",\\"message\\":\\"Model catalog unavailable\\"}","statusCodeValue":503,"statusCode":"Service Unavailable"}'
+    assert envelope_status(catalog) == 503
+    assert "Model catalog unavailable" in (envelope_error(catalog) or "")
+
+    login = '{"headers":{},"body":"{\\"code\\":\\"105\\",\\"message\\":\\"Login expired\\"}","statusCodeValue":403,"statusCode":"FORBIDDEN"}'
+    assert envelope_status(login) == 403
+
+    ok = '{"headers":{},"body":"{\\"id\\":\\"1\\",\\"choices\\":[{\\"delta\\":{\\"content\\":\\"hi\\"}}]}","statusCodeValue":200}'
+    assert envelope_status(ok) is None
+
+    assert envelope_status("[DONE]") is None
+    assert envelope_status("") is None
+    assert envelope_status('{"headers":{},"body":"not-json","statusCodeValue":200}') is None
 
 
 def test_unwrap_outer_sse_envelope():

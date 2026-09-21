@@ -252,6 +252,43 @@ def envelope_error(raw: str) -> str | None:
     return None
 
 
+def envelope_status(raw: str) -> int | None:
+    """Upstream business status carried by the QwenWork SSE envelope.
+
+    The transport always answers HTTP 200; the real verdict lives in
+    ``statusCodeValue`` (or an inner ``code``). Reporting the envelope status
+    instead of a hardcoded 400 keeps failure diagnostics truthful and lets
+    RETRYABLE_STATUS do its job (e.g. 503 during a backend outage).
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        outer = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(outer, dict):
+        return None
+    status = outer.get("statusCodeValue")
+    if isinstance(status, int) and status >= 400:
+        return status
+    inner = outer.get("body")
+    payload: object = inner
+    if isinstance(inner, str):
+        try:
+            payload = json.loads(inner)
+        except json.JSONDecodeError:
+            payload = None
+    if isinstance(payload, dict):
+        try:
+            code = int(str(payload.get("code")))
+        except (TypeError, ValueError):
+            return None
+        if code >= 400:
+            return code
+    return None
+
+
 def unwrap_sse_payload(raw: str) -> list[str]:
     """Peel the QwenWork outer envelope; return inner OpenAI SSE data payloads."""
     text = raw.strip()
@@ -395,9 +432,10 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
                         data = line[5:].strip()
                         env_err = envelope_error(data)
                         if env_err:
+                            status = envelope_status(data) or 400
                             last_error = (
                                 "error",
-                                (400, {"error": {"message": env_err, "type": "invalid_request_error"}}),
+                                (status, {"error": {"message": env_err, "type": "upstream_error", "code": status}}),
                             )
                             chunks = []
                             break
@@ -406,8 +444,17 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
                                 chunks.append(json.loads(inner))
                             except json.JSONDecodeError:
                                 continue
-            if last_error and last_error[0] == "error" and last_error[1][0] == 400 and not chunks:
-                _log(api_key_info, account, model_name, False, 0, 0, 0, "error", 400, str(last_error[1][1])[:400], t0)
+            if last_error and last_error[0] == "error" and not chunks:
+                status = int(last_error[1][0] or 400)
+                retryable = status in RETRYABLE_STATUS
+                _log(
+                    api_key_info, account, model_name, False, 0, 0, 0,
+                    "retry" if retryable and attempt < 2 else "error",
+                    status, str(last_error[1][1])[:400], t0,
+                    increment_usage=not retryable or attempt == 2,
+                )
+                if retryable and attempt < 2:
+                    continue
                 return last_error
             aggregated = _aggregate(chunks, model_name)
             usage = aggregated.get("usage") or {}
@@ -448,6 +495,7 @@ async def _stream(raw: str, url: str, request_id: str, upstream_model: str, api_
         tried.add(account["id"])
         t0 = time.time()
         output_started = False
+        env_retry = False
         try:
             headers = _headers_for(account, url, raw, upstream_model, request_id)
             async with httpx.AsyncClient(timeout=None) as client:
@@ -471,14 +519,22 @@ async def _stream(raw: str, url: str, request_id: str, upstream_model: str, api_
                         data = line[5:].strip()
                         env_err = envelope_error(data)
                         if env_err:
-                            last_error = f"data: {json.dumps({'error': {'message': env_err}}, ensure_ascii=False)}\n\n".encode()
+                            status = envelope_status(data) or 400
+                            last_status = status
+                            last_error = f"data: {json.dumps({'error': {'message': env_err, 'code': status}}, ensure_ascii=False)}\n\n".encode()
+                            if status in RETRYABLE_STATUS and not output_started and attempt < 2:
+                                _log(api_key_info, account, model_name, True, 0, 0, 0, "retry", status, env_err, t0, increment_usage=False)
+                                env_retry = True
+                                break
                             if not output_started:
                                 yield last_error
-                            _log(api_key_info, account, model_name, True, 0, 0, 0, "error", 400, env_err, t0)
+                            _log(api_key_info, account, model_name, True, 0, 0, 0, "error", status, env_err, t0)
                             return
                         for inner in unwrap_sse_payload(data):
                             output_started = True
                             yield f"data: {inner}\n\n".encode("utf-8")
+            if env_retry:
+                continue
             if output_started:
                 yield b"data: [DONE]\n\n"
             _log(api_key_info, account, model_name, True, 0, 0, 0, "stop", 200, "", t0)
@@ -526,7 +582,7 @@ async def test_chat(account: dict, model: str = "qwork-advanced", prompt: str = 
                     if env_err:
                         return {
                             "ok": False,
-                            "status_code": 400,
+                            "status_code": envelope_status(data) or 400,
                             "duration_ms": int((time.time() - t0) * 1000),
                             "message": env_err,
                         }

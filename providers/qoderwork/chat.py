@@ -214,6 +214,15 @@ def _envelope_error_message(env: dict) -> str:
     return msg
 
 
+def _failover(status_code: int, msg: str = "") -> bool:
+    """True => 这是「本账号特有」的错误（额度/模型权限），应换下一个账号重试。
+
+    与 RETRYABLE_STATUS（瞬时错误）互补：额度/模型类错误在 HTTP 码上常常就是
+    400，但对池子里的另一个账号很可能是正常的，所以不能直接吐给客户端。
+    """
+    return auth_manager.classify_failover(status_code, msg) is not None
+
+
 async def _native_frames(response) -> AsyncGenerator[tuple[str, dict | None], None]:
     """Parse a native SSE response into (event, envelope) frames.
 
@@ -280,36 +289,43 @@ async def _native_stream(encoded: str, request_id: str, session_id: str, upstrea
     last_error = b'data: {"error":{"message":"No available accounts"}}\n\n'
     last_status = 503
     for _ in range(3):
-        account = await _pick(tried)
+        account = await _pick(tried, upstream_model)
         if not account:
             break
         tried.add(account["id"])
         t0 = time.time()
         headers = _native_headers_for(account, encoded, upstream_model)
         if headers is None:
-            auth_manager.mark_account_failure(account["id"], 401)
+            auth_manager.mark_account_failure(account["id"], 401, provider=CHANNEL_ID)
             last_error = (
                 f"data: {json.dumps({'error': {'message': 'COSY credentials missing for this account'}}, ensure_ascii=False)}\n\n"
             ).encode()
             last_status = 401
             continue
         output_started = False
+        retry_next = False
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("POST", cosy.NATIVE_INFER_URL, headers=headers, content=encoded) as response:
                     last_status = response.status_code
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
-                        auth_manager.mark_account_failure(account["id"], response.status_code)
+                        auth_manager.mark_account_failure(
+                            account["id"], response.status_code, text,
+                            provider=CHANNEL_ID, model=upstream_model,
+                        )
                         last_error = (
                             f"data: {json.dumps({'error': {'message': text}}, ensure_ascii=False)}\n\n"
                         ).encode()
-                        if response.status_code not in RETRYABLE_STATUS:
+                        if (response.status_code not in RETRYABLE_STATUS
+                                and not _failover(response.status_code, text)):
                             yield last_error
                             _log(api_key_info, account, model_name, True, 0, 0, 0, "error", response.status_code, text, t0)
                             return
                         continue
-                    auth_manager.mark_account_success(account["id"])
+                    auth_manager.mark_account_success(
+                        account["id"], provider=CHANNEL_ID, model=upstream_model
+                    )
                     finish_reason = ""
                     usage: dict = {}
                     async for event, env in _native_frames(response):
@@ -320,7 +336,18 @@ async def _native_stream(encoded: str, request_id: str, session_id: str, upstrea
                         sc = env.get("statusCodeValue")
                         if sc not in (0, 200, None):
                             msg = _envelope_error_message(env)
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, msg,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
+                            if not output_started and _failover(400, msg):
+                                # 账号级错误（额度/模型权限）→ 换下一个账号重试
+                                last_error = (
+                                    f"data: {json.dumps({'error': {'message': msg, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
+                                ).encode("utf-8")
+                                last_status = 400
+                                retry_next = True
+                                break
                             yield (
                                 f"data: {json.dumps({'error': {'message': msg, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
                             ).encode("utf-8")
@@ -337,7 +364,17 @@ async def _native_stream(encoded: str, request_id: str, session_id: str, upstrea
                             continue
                         err = _is_error_chunk(inner)
                         if err:
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, err,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
+                            if not output_started and _failover(400, err):
+                                last_error = (
+                                    f"data: {json.dumps({'error': {'message': err, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
+                                ).encode("utf-8")
+                                last_status = 400
+                                retry_next = True
+                                break
                             yield (
                                 f"data: {json.dumps({'error': {'message': err, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
                             ).encode("utf-8")
@@ -354,10 +391,16 @@ async def _native_stream(encoded: str, request_id: str, session_id: str, upstrea
                             inner["model"] = model_name
                         output_started = True
                         yield f"data: {json.dumps(inner, ensure_ascii=False)}\n\n".encode("utf-8")
+            if retry_next:
+                # 上游判定本账号不可用（额度/模型权限）→ 换下一个账号
+                continue
             if not output_started:
                 # Connected fine but produced nothing -> treat as a bad account and
                 # let the retry loop try the next one.
-                auth_manager.mark_account_failure(account["id"], 502)
+                auth_manager.mark_account_failure(
+                    account["id"], 502, "empty upstream stream",
+                    provider=CHANNEL_ID, model=upstream_model,
+                )
                 last_error = (
                     f"data: {json.dumps({'error': {'message': 'empty upstream stream'}}, ensure_ascii=False)}\n\n"
                 ).encode()
@@ -381,7 +424,10 @@ async def _native_stream(encoded: str, request_id: str, session_id: str, upstrea
                 _log(api_key_info, account, model_name, True, 0, 0, 0, "error", 502,
                      "stream interrupted: %s" % str(exc)[:200], t0)
                 return
-            auth_manager.mark_account_failure(account["id"], 503)
+            auth_manager.mark_account_failure(
+                account["id"], 503, str(exc)[:240],
+                provider=CHANNEL_ID, model=upstream_model,
+            )
             last_error = (
                 f"data: {json.dumps({'error': {'message': str(exc)[:240]}}, ensure_ascii=False)}\n\n"
             ).encode()
@@ -396,28 +442,35 @@ async def _native_json(encoded: str, request_id: str, session_id: str, upstream_
     tried: set[int] = set()
     last_error = None
     for _ in range(3):
-        account = await _pick(tried)
+        account = await _pick(tried, upstream_model)
         if not account:
             break
         tried.add(account["id"])
         t0 = time.time()
         headers = _native_headers_for(account, encoded, upstream_model)
         if headers is None:
-            auth_manager.mark_account_failure(account["id"], 401)
+            auth_manager.mark_account_failure(account["id"], 401, provider=CHANNEL_ID)
             last_error = ("error", (401, {"error": {"message": "COSY credentials missing for this account", "type": "auth_error"}}))
             continue
+        retry_next = False
         try:
             chunks: list[dict] = []
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", cosy.NATIVE_INFER_URL, headers=headers, content=encoded) as response:
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
-                        auth_manager.mark_account_failure(account["id"], response.status_code)
+                        auth_manager.mark_account_failure(
+                            account["id"], response.status_code, text,
+                            provider=CHANNEL_ID, model=upstream_model,
+                        )
                         last_error = ("error", (response.status_code, {"error": {"message": text, "type": "server_error"}}))
-                        if response.status_code not in RETRYABLE_STATUS:
+                        if (response.status_code not in RETRYABLE_STATUS
+                                and not _failover(response.status_code, text)):
                             return last_error
                         continue
-                    auth_manager.mark_account_success(account["id"])
+                    auth_manager.mark_account_success(
+                        account["id"], provider=CHANNEL_ID, model=upstream_model
+                    )
                     async for event, env in _native_frames(response):
                         if event == "finish":
                             break
@@ -426,8 +479,15 @@ async def _native_json(encoded: str, request_id: str, session_id: str, upstream_
                         sc = env.get("statusCodeValue")
                         if sc not in (0, 200, None):
                             msg = _envelope_error_message(env)
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, msg,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
                             last_error = ("error", (400, {"error": {"message": msg, "type": "upstream_error"}}))
+                            if _failover(400, msg):
+                                # 账号级错误（额度/模型权限）→ 换下一个账号重试
+                                retry_next = True
+                                break
                             _log(api_key_info, account, model_name, False, 0, 0, 0, "error", 400, msg, t0)
                             return last_error
                         body = env.get("body")
@@ -441,11 +501,21 @@ async def _native_json(encoded: str, request_id: str, session_id: str, upstream_
                             continue
                         err = _is_error_chunk(inner)
                         if err:
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, err,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
                             last_error = ("error", (400, {"error": {"message": err, "type": "upstream_error"}}))
+                            if _failover(400, err):
+                                # 账号级错误（额度/模型权限）→ 换下一个账号重试
+                                retry_next = True
+                                break
                             _log(api_key_info, account, model_name, False, 0, 0, 0, "error", 400, err, t0)
                             return last_error
                         chunks.append(inner)
+            if retry_next:
+                # 上游判定本账号不可用（额度/模型权限）→ 换下一个账号
+                continue
             aggregated = _aggregate(chunks, model_name)
             usage = aggregated.get("usage") or {}
             _log(
@@ -458,7 +528,10 @@ async def _native_json(encoded: str, request_id: str, session_id: str, upstream_
             )
             return ("json", aggregated)
         except httpx.HTTPError as exc:
-            auth_manager.mark_account_failure(account["id"], 503)
+            auth_manager.mark_account_failure(
+                account["id"], 503, str(exc)[:240],
+                provider=CHANNEL_ID, model=upstream_model,
+            )
             last_error = ("error", (503, {"error": {"message": str(exc)[:240], "type": "server_error"}}))
             continue
     return last_error or (
@@ -572,8 +645,8 @@ def _log(api_key_info, account, model_name, stream, prompt_t, completion_t, tota
         pass
 
 
-async def _pick(tried: set[int]) -> dict | None:
-    account = auth_manager.pick_account(tried, provider=CHANNEL_ID)
+async def _pick(tried: set[int], model: str = "") -> dict | None:
+    account = auth_manager.pick_account(tried, provider=CHANNEL_ID, model=model)
     if account and is_token_expired(account):
         try:
             account = await refresh_account(account)
@@ -582,11 +655,17 @@ async def _pick(tried: set[int]) -> dict | None:
     if account:
         return account
     for row in db.list_accounts(provider=CHANNEL_ID):
-        if row.get("status") == "expired" and row.get("id") not in tried:
-            try:
-                return await refresh_account(row)
-            except QoderAuthError:
-                continue
+        if row.get("status") != "expired" or row.get("id") in tried:
+            continue
+        # 额度耗尽被下架的账号：刷新 token 也救不回来（额度还是空的），跳过
+        if auth_manager.account_quota_blocked(row):
+            continue
+        if model and auth_manager.account_model_blocked(row["id"], CHANNEL_ID, model):
+            continue
+        try:
+            return await refresh_account(row)
+        except QoderAuthError:
+            continue
     return None
 
 
@@ -615,11 +694,12 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
     tried: set[int] = set()
     last_error = None
     for _ in range(3):
-        account = await _pick(tried)
+        account = await _pick(tried, upstream_model)
         if not account:
             break
         tried.add(account["id"])
         t0 = time.time()
+        retry_next = False
         try:
             token = _ids(account)[2]
             headers = _headers(token, request_id, session_id)
@@ -628,15 +708,21 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
                 async with client.stream("POST", CHAT_URL, headers=headers, content=raw) as response:
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
-                        auth_manager.mark_account_failure(account["id"], response.status_code)
+                        auth_manager.mark_account_failure(
+                            account["id"], response.status_code, text,
+                            provider=CHANNEL_ID, model=upstream_model,
+                        )
                         last_error = (
                             "error",
                             (response.status_code, {"error": {"message": text, "type": "server_error"}}),
                         )
-                        if response.status_code not in RETRYABLE_STATUS:
+                        if (response.status_code not in RETRYABLE_STATUS
+                                and not _failover(response.status_code, text)):
                             return last_error
                         continue
-                    auth_manager.mark_account_success(account["id"])
+                    auth_manager.mark_account_success(
+                        account["id"], provider=CHANNEL_ID, model=upstream_model
+                    )
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -649,10 +735,19 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
                             continue
                         err = _is_error_chunk(parsed)
                         if err:
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, err,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
+                            if _failover(400, err):
+                                retry_next = True
+                                break
                             _log(api_key_info, account, model_name, False, 0, 0, 0, "error", 400, err, t0)
                             return ("error", (400, {"error": {"message": err, "type": "upstream_error"}}))
                         chunks.append(parsed)
+            if retry_next:
+                # 上游判定本账号不可用（额度/模型权限）→ 换下一个账号
+                continue
             aggregated = _aggregate(chunks, model_name)
             usage = aggregated.get("usage") or {}
             _log(
@@ -665,7 +760,10 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
             )
             return ("json", aggregated)
         except httpx.HTTPError as exc:
-            auth_manager.mark_account_failure(account["id"], 503)
+            auth_manager.mark_account_failure(
+                account["id"], 503, str(exc)[:240],
+                provider=CHANNEL_ID, model=upstream_model,
+            )
             last_error = ("error", (503, {"error": {"message": str(exc)[:240], "type": "server_error"}}))
             continue
     return last_error or (
@@ -687,12 +785,13 @@ async def _stream(raw: str, request_id: str, session_id: str, upstream_model: st
     last_error = b'data: {"error":{"message":"No available accounts"}}\n\n'
     last_status = 503
     for _ in range(3):
-        account = await _pick(tried)
+        account = await _pick(tried, upstream_model)
         if not account:
             break
         tried.add(account["id"])
         t0 = time.time()
         output_started = False
+        retry_next = False
         try:
             token = _ids(account)[2]
             headers = _headers(token, request_id, session_id)
@@ -701,16 +800,22 @@ async def _stream(raw: str, request_id: str, session_id: str, upstream_model: st
                     last_status = response.status_code
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
-                        auth_manager.mark_account_failure(account["id"], response.status_code)
+                        auth_manager.mark_account_failure(
+                            account["id"], response.status_code, text,
+                            provider=CHANNEL_ID, model=upstream_model,
+                        )
                         last_error = (
                             f"data: {json.dumps({'error': {'message': text}}, ensure_ascii=False)}\n\n"
                         ).encode()
-                        if response.status_code not in RETRYABLE_STATUS:
+                        if (response.status_code not in RETRYABLE_STATUS
+                                and not _failover(response.status_code, text)):
                             yield last_error
                             _log(api_key_info, account, model_name, True, 0, 0, 0, "error", response.status_code, text, t0)
                             return
                         continue
-                    auth_manager.mark_account_success(account["id"])
+                    auth_manager.mark_account_success(
+                        account["id"], provider=CHANNEL_ID, model=upstream_model
+                    )
                     async for line in response.aiter_lines():
                         if not line or not line.startswith("data:"):
                             continue
@@ -723,7 +828,17 @@ async def _stream(raw: str, request_id: str, session_id: str, upstream_model: st
                             continue
                         err = _is_error_chunk(parsed)
                         if err:
-                            auth_manager.mark_account_failure(account["id"], 400)
+                            auth_manager.mark_account_failure(
+                                account["id"], 400, err,
+                                provider=CHANNEL_ID, model=upstream_model,
+                            )
+                            if not output_started and _failover(400, err):
+                                last_error = (
+                                    f"data: {json.dumps({'error': {'message': err, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
+                                ).encode("utf-8")
+                                last_status = 400
+                                retry_next = True
+                                break
                             yield (
                                 f"data: {json.dumps({'error': {'message': err, 'type': 'upstream_error'}}, ensure_ascii=False)}\n\n"
                             ).encode("utf-8")
@@ -731,6 +846,9 @@ async def _stream(raw: str, request_id: str, session_id: str, upstream_model: st
                             return
                         output_started = True
                         yield f"data: {data}\n\n".encode("utf-8")
+            if retry_next:
+                # 上游判定本账号不可用（额度/模型权限）→ 换下一个账号
+                continue
             if output_started:
                 yield b"data: [DONE]\n\n"
             _log(api_key_info, account, model_name, True, 0, 0, 0, "stop", 200, "", t0)
@@ -738,7 +856,9 @@ async def _stream(raw: str, request_id: str, session_id: str, upstream_model: st
         except httpx.HTTPError as exc:
             if output_started:
                 return
-            auth_manager.mark_account_failure(account["id"], 503)
+            auth_manager.mark_account_failure(
+                account["id"], 503, provider=CHANNEL_ID, model=upstream_model,
+            )
             last_error = (
                 f"data: {json.dumps({'error': {'message': str(exc)[:240]}}, ensure_ascii=False)}\n\n"
             ).encode()

@@ -39,7 +39,9 @@ def traework_enabled(monkeypatch):
 
 def test_traework_in_default_registry(monkeypatch):
     monkeypatch.delenv("CB_GATEWAY_PROVIDERS", raising=False)
-    assert providers.enabled_provider_ids() == ["workbuddy", "qclaw", "qwenwork", "traework"]
+    assert providers.enabled_provider_ids() == [
+        "workbuddy", "qclaw", "qwenwork", "traework", "qoderwork", "zcode",
+    ]
     assert providers.get_provider("traework") is not None
     assert "traework" in providers._LOADED
 

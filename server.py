@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import contextvars
 import hashlib
+import inspect
 import ipaddress
 import json
 import os
@@ -694,6 +695,73 @@ async def admin_qclaw_login_complete(
     return {"id": result["id"], "status": "ok", "updated": result["updated"], "provider": "qclaw"}
 
 
+def _zcode_provider():
+    import providers as _providers_mod
+
+    provider = _providers_mod.get_provider("zcode")
+    if provider is None:
+        raise HTTPException(status_code=400, detail="zcode channel is not enabled")
+    return provider
+
+
+@app.post("/admin/zcode/oauth/start")
+async def admin_zcode_oauth_start(authorization: str | None = Header(default=None)):
+    _check_admin(authorization)
+    try:
+        return await _zcode_provider().oauth_start()
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/admin/zcode/oauth/status")
+async def admin_zcode_oauth_status(
+    session_id: str = "",
+    authorization: str | None = Header(default=None),
+):
+    _check_admin(authorization)
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        return await _zcode_provider().oauth_status(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/admin/zcode/oauth/complete")
+async def admin_zcode_oauth_complete(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    _check_admin(authorization)
+    data = await _read_json_object(request)
+    session_id = str(data.get("session_id") or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        return await _zcode_provider().oauth_complete(session_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/admin/zcode/import")
+async def admin_zcode_import(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    """从 zcode2api 的 accounts.db 导入全部账号（JWT / API Key）。"""
+    _check_admin(authorization)
+    data = await _read_json_object(request)
+    db_path = str(data.get("db_path") or "").strip()
+    if not db_path:
+        raise HTTPException(status_code=400, detail="db_path is required (zcode2api accounts.db)")
+    try:
+        result = _zcode_provider().import_zcode2api(db_path)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", **result, "provider": "zcode"}
+
+
 @app.put("/admin/accounts/{aid}")
 async def admin_update_account(
     aid: int,
@@ -853,7 +921,12 @@ async def admin_account_resources(
                 "remaining": None,
                 "message": "quota API not available",
             }
-        snapshot = await fetch_quota(account)
+        # 支持 force 的 provider（如 zcode）在用户主动刷新时绕过其内部错峰缓存；
+        # 不支持的 provider 保持单参数调用，避免 TypeError。
+        if "force" in inspect.signature(fetch_quota).parameters:
+            snapshot = await fetch_quota(account, force=bool(force))
+        else:
+            snapshot = await fetch_quota(account)
         extra = getattr(snapshot, "extra", None) or {}
         if not isinstance(extra, dict):
             extra = {}
@@ -872,7 +945,13 @@ async def admin_account_resources(
             "available_total": credit_remaining,
             "unsupported": unsupported,
             "message": getattr(snapshot, "message", "") or "",
-            "packages": [],
+            "packages": extra.get("packages") or [],
+            "plan_name": extra.get("plan_name") or "",
+            "plan_ends_at": extra.get("plan_ends_at"),
+            "windows": extra.get("windows") or [],
+            "claimable": extra.get("claimable") or [],
+            "server_time": extra.get("server_time"),
+            "stale": bool(extra.get("stale")),
         }
     return await auth_manager.fetch_account_resources(account, force=bool(force))
 
@@ -887,6 +966,10 @@ async def admin_checkin_status(
     account = db.get_account(aid)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+    provider = providers.get_provider(account.get("provider") or "")
+    fetch_checkin = getattr(provider, "fetch_checkin", None) if provider else None
+    if fetch_checkin:
+        return await fetch_checkin(account, force=bool(force))
     return await auth_manager.fetch_checkin_status(account, force=bool(force))
 
 
@@ -899,6 +982,23 @@ async def admin_checkin_status_all(
     return await control_plane.checkin_status_all(force=bool(force))
 
 
+@app.get("/admin/providers/{pid}/diagnostics")
+async def admin_provider_diagnostics(
+    pid: str,
+    authorization: str | None = Header(default=None),
+):
+    """渠道级排障信息（如 zcode 的验证码求解器可用性/降级原因）。"""
+    _check_admin(authorization)
+    provider = providers.get_provider(pid)
+    diag_fn = getattr(provider, "diagnostics", None) if provider else None
+    if not diag_fn:
+        raise HTTPException(status_code=404, detail="该渠道未提供 diagnostics")
+    result = diag_fn()
+    if inspect.isawaitable(result):
+        result = await result
+    return {"provider": pid, **result}
+
+
 @app.post("/admin/accounts/{aid}/checkin")
 async def admin_claim_checkin(
     aid: int,
@@ -908,8 +1008,13 @@ async def admin_claim_checkin(
     account = db.get_account(aid)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    result = await auth_manager.claim_daily_checkin(account)
-    if result.get("ok"):
+    provider = providers.get_provider(account.get("provider") or "")
+    claim_fn = getattr(provider, "claim_checkin", None) if provider else None
+    if claim_fn:
+        result = await claim_fn(account)
+    else:
+        result = await auth_manager.claim_daily_checkin(account)
+    if result.get("ok") and not claim_fn:
         result["resources"] = await auth_manager.fetch_account_resources(account, force=True)
     return result
 

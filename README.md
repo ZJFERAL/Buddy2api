@@ -2,7 +2,7 @@
 
 [English](README_EN.md) | 中文
 
-> 把本机已经登录的消费级 AI 客户端，接成 OpenAI 兼容接口，给 Codex、OpenCode、Cherry Studio、NextChat 等用。默认打开 Work Buddy / CodeBuddy、QClaw、千问办公（QwenWork）、TraeWork 四个通道；管理页下拉选其中一个。一次请求只走一个通道。
+> 把本机已经登录的消费级 AI 客户端，接成 OpenAI 兼容接口，给 Codex、OpenCode、Cherry Studio、NextChat 等用。默认打开 Work Buddy / CodeBuddy、QClaw、千问办公（QwenWork）、TraeWork、ZCode（智谱 GLM 编码套餐）等通道；管理页下拉选其中一个。一次请求只走一个通道。
 
 当前版本 **2.1.13**。这个项目只适合本机自用，不要公开部署，也不要把登录凭据、API Key、数据库文件发给别人。
 
@@ -12,7 +12,7 @@
 
 Buddy2api 在本机提供 `http://127.0.0.1:8787/v1`。你在官方客户端里登录并且还有额度，这个网关把本机登录导入进来，把请求转到对应厂商。普通客户端走 Chat Completions；Codex 走 `/v1/responses`，管理页把 Key 类型选成 Codex 时会做一轮内容清洗。
 
-四个通道默认都开。没装、没登录的通道，账号页检测为空，不会自动入库。
+各通道默认都开。没装、没登录的通道，账号页检测为空，不会自动入库。
 
 ```powershell
 python server.py
@@ -24,6 +24,7 @@ python server.py
 | QClaw | 开 | `%APPDATA%\QClaw` |
 | 千问办公 QwenWork | 开 | `%APPDATA%\QwenWorkCN` |
 | TraeWork | 开 | `%APPDATA%\TRAE SOLO CN\User\globalStorage` |
+| ZCode（GLM 编码套餐） | 开 | 无本机登录文件；账号靠 **OAuth 免密登录** / 粘贴 JWT 或 API Key / 从 zcode2api 数据库导入 |
 
 路径不对时可用 `CB_AUTH_DIR`、`CB_QCLAW_AUTH_DIR`、`CB_QWENWORK_AUTH_DIR`、`CB_TRAEWORK_AUTH_DIR` 指定。四个通道的登录文件不要混在同一个目录。只要其中一家时，可设 `CB_GATEWAY_PROVIDERS=workbuddy` 收窄。
 
@@ -31,8 +32,8 @@ python server.py
 
 按下面「安装与启动」即可。这几条是 2.0 里最容易踩空的：
 
-1. **启动后账号页是空的，这是正常的。** 默认不再自动入库。到「账号」页：选通道 → 重新检测 → 一键导入。四个通道都能选。
-2. **一把 API Key 只打一个通道。** 创建时必须选通道。WorkBuddy 的 Key 发 `auto` / `glm-5.2`；QwenWork 的 Key 发 `auto` 或 `qwork-advanced`；TraeWork 的 Key 发 `auto` 或 `qwen-3.7-plus`。通道和模型对不上会 400 或 403，不会帮你转到另一家。
+1. **启动后账号页是空的，这是正常的。** 默认不再自动入库。到「账号」页：选通道 → 重新检测 → 一键导入。除了本机登录检测，**ZCode 通道**在「高级手动添加」里支持三种入池方式：① 「OAuth 免密登录」跳转智谱授权（推荐，浏览器授权一次，自动拿到 JWT + 回退 API Key）；② 直接粘贴 JWT 或 `api_key.secret`；③ 粘贴 zcode2api 的 `accounts.db` 路径一键导入全部账号。JWT 账号走 zcode.z.ai Plan 通道（需阿里云无痕验证码，自动求解，需本机 Node；求解器按优先级回退，默认使用相邻仓库 `zocdedemo/zcode2api/captcha_node/solver.js`，仓库自带的基础版只能产出被上游 `3007` 拒绝的降级 param、仅作兜底。领取/求解排障：`GET /admin/providers/zcode/diagnostics`）；API Key 账号走 api.z.ai 回退通道（免验证码）。
+2. **一把 API Key 只打一个通道。** 创建时必须选通道。WorkBuddy 的 Key 发 `auto` / `glm-5.2`；QwenWork 的 Key 发 `auto` 或 `qwork-advanced`；TraeWork 的 Key 发 `auto` 或 `qwen-3.7-plus`；ZCode 的 Key 发 `auto` 或 `zcode/glm-5.3`（模型列表见「模型配置」页）。通道和模型对不上会 400 或 403，不会帮你转到另一家。
 3. **某个通道返回 503 `channel_unavailable`：** 这个通道还没导入可用账号。
 4. **QClaw / QwenWork 请在 Windows 上直接跑 `python server.py`。** Linux Docker 读不了这两家用 DPAPI 加密的本机文件；管理页会写明这一点。WorkBuddy 可以继续用 Docker。
 5. 本项目和聊天客户端最好在同一台电脑。客户端如果跑在 Docker 里，Base URL 填 `http://host.docker.internal:8787/v1`，不要填容器自己的 `127.0.0.1`。
