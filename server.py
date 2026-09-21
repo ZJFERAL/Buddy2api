@@ -48,6 +48,7 @@ from reasoning_controls import (
     resolve_reasoning_control,
 )
 from version import VERSION
+import self_update
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -998,6 +999,24 @@ async def admin_logs_search(
 
 
 # --- Settings ---
+
+@app.get("/admin/version")
+async def admin_get_version(
+    refresh: int = 0,
+    authorization: str | None = Header(default=None),
+):
+    _check_admin(authorization)
+    return await self_update.check(force=bool(refresh))
+
+
+@app.post("/admin/update")
+async def admin_apply_update(authorization: str | None = Header(default=None)):
+    _check_admin(authorization)
+    result = await run_in_threadpool(self_update.apply)
+    if result.get("restart"):
+        self_update.schedule_restart()
+    return result
+
 
 @app.get("/admin/settings")
 async def admin_get_settings(authorization: str | None = Header(default=None)):
