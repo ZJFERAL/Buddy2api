@@ -68,6 +68,10 @@ Later starts: `conda activate buddy2api` then `python server.py` in the project 
 - 403 `key_channel_mismatch`: the model prefix does not match the key’s channel.
 - 400 `unknown_model`: that model does not belong to this key’s channel.
 
+## Update
+
+The management page checks for a newer `main` in the background (jsDelivr first). A top-bar **Update to vx.y.z** button runs `git pull --ff-only`, reinstalls requirements, and restarts. A failed check stays silent. Docker images, zip copies, and non-`main` checkouts keep using a manual pull. To preview the button on an already-current install, start with `CB_GATEWAY_FAKE_LATEST=9.9.9`; the click does not pull or restart.
+
 ## Upgrade from 1.4.x
 
 The database migrates on startup. Existing keys stay on `workbuddy`. Startup no longer auto-imports; empty channel is 503; new keys must pick a channel; the official-balance column shows credits only.
