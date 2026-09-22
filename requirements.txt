@@ -2,3 +2,4 @@ cryptography==50.0.1
 fastapi==0.141.1
 httpx==0.28.1
 uvicorn[standard]==0.52.0
+websockets>=14.0
