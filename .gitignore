@@ -101,3 +101,10 @@ npm_install_shim.js
 npm_fix.js
 install_captcha_deps.js
 reinstall_captcha_deps.js
+
+# Local launch scripts (per-user, do not commit)
+start-oneclick.bat
+start-oneclick.vbs
+start.bat
+Buddy2API.lnk
+memorix.toml
