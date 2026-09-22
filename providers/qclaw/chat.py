@@ -36,8 +36,29 @@ def _alt_text(value) -> str:
     return ""
 
 
+def normalize_reasoning_alias(payload: dict) -> dict:
+    """把 Ollama 风格的 reasoning 归一为 reasoning_content。
+
+    只做字段改名，绝不回填 content —— 流式 delta 回填会让每一帧同时带
+    两个字段，客户端会重复渲染并被打断成碎片。
+    """
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    if not out.get("reasoning_content"):
+        text = _alt_text(out.get("reasoning"))
+        if text:
+            out["reasoning_content"] = text
+    out.pop("reasoning", None)
+    return out
+
+
 def fill_empty_content(payload: dict) -> dict:
-    """Aizone often fills reasoning_content first; OpenAI clients only render content."""
+    """Aizone often fills reasoning_content first; OpenAI clients only render content.
+
+    【仅用于非流式完整 message】流式场景下 content 会跨帧累积，只需在收尾时补全，
+    不应逐帧回填。
+    """
     if not isinstance(payload, dict):
         return payload
     out = dict(payload)
@@ -65,9 +86,11 @@ def _normalize_completion(data: dict) -> dict:
             continue
         item = dict(choice)
         if isinstance(item.get("message"), dict):
-            item["message"] = fill_empty_content(item["message"])
+            # 非流式：保留原有的空 content 兜底（提交 5b77302 的本意）
+            item["message"] = fill_empty_content(normalize_reasoning_alias(item["message"]))
         if isinstance(item.get("delta"), dict):
-            item["delta"] = fill_empty_content(item["delta"])
+            # 流式：只归一别名，不回填 content
+            item["delta"] = normalize_reasoning_alias(item["delta"])
         choices.append(item)
     out["choices"] = choices
     return out
@@ -234,6 +257,14 @@ async def _stream(body: dict, raw: str, api_key_info, model_name: str) -> AsyncG
                             continue
                         try:
                             parsed = _normalize_completion(json.loads(data))
+                            # 出口保险：防止任何来源的双写导致客户端重复渲染
+                            if isinstance(parsed.get("choices"), list) and parsed["choices"]:
+                                delta = parsed["choices"][0].get("delta", {})
+                                if isinstance(delta, dict):
+                                    reasoning = delta.get("reasoning_content")
+                                    content = delta.get("content")
+                                    if reasoning == content and reasoning:
+                                        delta["reasoning_content"] = ""
                             payload = json.dumps(parsed, ensure_ascii=False)
                         except (json.JSONDecodeError, TypeError):
                             payload = data

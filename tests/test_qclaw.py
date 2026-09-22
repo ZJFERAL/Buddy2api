@@ -10,7 +10,7 @@ import providers
 import router
 from providers.protocol import KeyChannelMismatch, UnknownChannel, UnknownModel
 from providers.qclaw.constants import JPRX_SIGNATURE_KEY, STATIC_MODELS
-from providers.qclaw.chat import _build_body, fill_empty_content
+from providers.qclaw.chat import _build_body, fill_empty_content, normalize_reasoning_alias
 from providers.qclaw.sign import aizone_headers, jprx_ctx
 from providers.qclaw.store import parse_credentials, qclaw_auth_dirs
 
@@ -66,23 +66,123 @@ def test_qclaw_quota_uses_token_unit(qclaw_enabled, monkeypatch):
 def test_qclaw_in_default_registry(monkeypatch):
     monkeypatch.delenv("CB_GATEWAY_PROVIDERS", raising=False)
     assert providers.enabled_provider_ids() == [
-        "workbuddy", "qclaw", "qwenwork", "traework", "qoderwork", "zcode",
+        "workbuddy", "qclaw", "qwenwork", "traework", "qoderwork", "zcode", "monkeycode",
     ]
     assert providers.get_provider("qclaw") is not None
     assert "qclaw" in providers._LOADED
 
 
 def test_fill_empty_content_uses_reasoning():
+    """非流式 message 仍需兜底：空 content 时回填 reasoning_content。"""
     filled = fill_empty_content({"role": "assistant", "content": "", "reasoning_content": "你好"})
     assert filled["content"] == "你好"
     kept = fill_empty_content({"role": "assistant", "content": "可见", "reasoning_content": "隐藏"})
     assert kept["content"] == "可见"
 
 
+def test_normalize_reasoning_alias_only_renames_no_fill(delta=True):
+    """流式 delta 只做别名归一，不填 content —— 防止双写。"""
+    # 只有 reasoning_content → 只改名，不产生 content
+    result = normalize_reasoning_alias({"reasoning_content": "思考中"})
+    assert result["reasoning_content"] == "思考中"
+    assert "content" not in result
+    assert "reasoning" not in result
+    
+    # 只有 reasoning → 归一为 reasoning_content，仍不产生 content
+    result = normalize_reasoning_alias({"reasoning": "深度思考"})
+    assert result["reasoning_content"] == "深度思考"
+    assert "content" not in result
+    assert "reasoning" not in result
+    
+    # 已有 content → reasoning 仍会被归一化为 reasoning_content（别名统一），但不会填 content
+    result = normalize_reasoning_alias({
+        "role": "assistant",
+        "content": "答案",
+        "reasoning": "思考"
+    })
+    assert result["content"] == "答案"
+    assert result.get("reasoning_content") == "思考"  # reasoning 被归一化了
+    assert "reasoning" not in result  # 原始字段被移除
+    
+    # reasoning_content 与 content 同时存在且不同 → 都保留
+    result = normalize_reasoning_alias({
+        "content": "答案",
+        "reasoning_content": "思考过程"
+    })
+    assert result["content"] == "答案"
+    assert result["reasoning_content"] == "思考过程"
+    
+    # 两者相同 → 这是上游问题或本层 bug，由出口保险处理，这里不归一
+    result = normalize_reasoning_alias({
+        "content": "重复",
+        "reasoning_content": "重复"
+    })
+    assert result["content"] == "重复"
+    assert result["reasoning_content"] == "重复"
+    # normalize_reasoning_alias 不负责检测/移除双写
+
+
 def test_fill_empty_content_normalizes_reasoning_alias():
     filled = fill_empty_content({"role": "assistant", "content": "", "reasoning": "思考"})
     assert filled["content"] == "思考"
     assert filled["reasoning_content"] == "思考"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expect_content", "expect_reasoning_content", "expect_reasoning"),
+    [
+        # delta 场景（流式）：只归一别名，不回填 content
+        ({"reasoning_content": "思考"}, None, "思考", None),
+        ({"reasoning": "深度思考"}, None, "深度思考", None),
+        ({"content": "答案"}, "答案", None, None),
+        ({"content": "答案", "reasoning": "思考"}, "答案", "思考", None),  # reasoning 被归一化为 reasoning_content
+        ({"content": "回答", "reasoning_content": "过程"}, "回答", "过程", None),
+    ],
+)
+def test_normalize_only_no_fill_delta(payload, expect_content, expect_reasoning_content, expect_reasoning):
+    """测试 delta 场景：normalize_reasoning_alias 只归一别名，不填 content。"""
+    from providers.qclaw.chat import _normalize_completion
+    
+    delta_payload = {"choices": [{"delta": payload}]}
+    delta_result = _normalize_completion(delta_payload)
+    delta_out = delta_result["choices"][0]["delta"]
+    
+    if expect_content is not None:
+        assert delta_out.get("content") == expect_content
+    else:
+        assert delta_out.get("content") is None
+        
+    if expect_reasoning_content is not None:
+        assert delta_out.get("reasoning_content") == expect_reasoning_content
+    else:
+        assert delta_out.get("reasoning_content") is None
+        
+    if expect_reasoning is not None:
+        assert delta_out.get("reasoning") == expect_reasoning
+    else:
+        assert "reasoning" not in delta_out or delta_out.get("reasoning") is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "expect_content", "expect_reasoning_content"),
+    [
+        # message 场景（非流式）：仍保留兜底回填
+        ({"role": "assistant", "content": "", "reasoning_content": "只有思考"}, "只有思考", "只有思考"),
+        ({"role": "assistant", "content": "", "reasoning": "原始推理"}, "原始推理", "原始推理"),
+        ({"role": "assistant", "content": "已有内容", "reasoning_content": "隐藏"}, "已有内容", "隐藏"),
+    ],
+)
+def test_fill_empty_content_for_message(payload, expect_content, expect_reasoning_content):
+    """测试 message 场景：fill_empty_content 会回填空 content。"""
+    from providers.qclaw.chat import _normalize_completion
+    
+    msg_payload = {"choices": [{"message": payload}]}
+    msg_result = _normalize_completion(msg_payload)
+    msg_out = msg_result["choices"][0]["message"]
+    
+    assert msg_out.get("content") == expect_content
+    assert msg_out.get("reasoning_content") == expect_reasoning_content
+
 
 
 @pytest.mark.parametrize(
