@@ -89,3 +89,15 @@ ant-code-uploads/
 # Qoder per-account auth snapshots (SECRETS - never commit)
 .qoder-auth/
 QODERWORK_PLAN.md
+
+# Node deps for the zcode captcha solver (installed locally, never commit)
+providers/zcode/captcha_node/node_modules/
+providers/zcode/captcha_node/install.log
+
+# One-off install/test shims (never commit)
+.tmp_*.py
+npm_install.js
+npm_install_shim.js
+npm_fix.js
+install_captcha_deps.js
+reinstall_captcha_deps.js
