@@ -83,6 +83,10 @@ class ZCodeProvider:
     async def chat_completions(self, payload: dict, api_key_info: dict | None) -> tuple:
         return await chat.chat_completions(payload, api_key_info)
 
+    async def test_chat(self, account: dict, model: str = "auto", prompt: str = "ping") -> dict:
+        """管理页「测试」：单账号只读探测，回传真实上游原因。"""
+        return await chat.test_chat(account, model, prompt)
+
     # ── 账号管理 ────────────────────────────────────────────────────────────
     def parse_credentials(self, body: dict) -> dict:
         return store.parse_credentials(body)

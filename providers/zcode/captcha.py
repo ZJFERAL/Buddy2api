@@ -8,17 +8,16 @@
 - token 时效 ~2 分钟，池内按 FIFO + 年龄淘汰；
 - 上游返回挑战时 invalidate() 清空整池（该批 token 可能已被风控盯上）。
 
-solver 程序（Node 脚本）通过环境变量 ZCODE_CAPTCHA_SOLVER_JS 指定；
-缺省按优先级回退：Buddy2api 自带 captcha_node/solver.js → 相邻仓库
-zocdedemo/zcode2api/captcha_node/solver.js（AGPL 参考实现，仅运行时
-外部引用，不并入 MIT 仓库）。
+求解器实现内化：
+- 源自 zcode2api (AGPL) 的已验证实现，现已完整迁移到此目录；
+- 依赖 happy-dom@^17.1.2 已安装到 captcha_node/node_modules；
+- 实测 ~3s 出含 securityToken 的完整 param；
+- ⚠ 不再依赖外部仓库路径，避免跨项目依赖和路径失效问题。
 
 ⚠ 求解结果必须过 is_valid_verify_param 质量校验：
 真 param 是 base64(JSON) 且含 securityToken（≥50 字符，整体 ~300+ 字符）。
 只含 certifyId/sceneId/isSign 的短结果（~76~90 字符）是 SDK 走 failover 的
 降级产物 —— 实测上游回 `400 code=3007 captcha verify failed`，绝不能入池。
-自带 solver 线上只能出这种降级结果（其反检测能力不足），故校验不通过时
-会自动落到下一个求解器。
 """
 
 from __future__ import annotations
@@ -46,18 +45,16 @@ SOLVE_TIMEOUT = int(os.environ.get("ZCODE_CAPTCHA_TIMEOUT", "40"))
 
 # 外部 solver 位置（按优先级回退）：
 #   1. 环境变量 ZCODE_CAPTCHA_SOLVER_JS 显式指定
-#   2. 相邻仓库 zcode2api 的已验证实现（AGPL，仅运行时外部引用，不并入 MIT 仓库）
-#      实测 ~3s 出含 securityToken 的完整 param
-#   3. 仓库自带 captcha_node/solver.js（自研、可独立运行，但反检测能力不足，
-#      线上只能拿到 failover 降级 param 且要等 ~25s，故仅作最后兜底）
+#   2. 内部求解器（已将 zcode2api 的实现完整内化到此目录）
+#      - 实测 ~3s 出含 securityToken 的完整 param
+#      - 依赖 happy-dom@^17.1.2 已安装到 captcha_node/node_modules
+#   注：不再依赖外部仓库路径，避免跨项目依赖问题
 _CANDIDATE_SOLVERS = (
     os.environ.get("ZCODE_CAPTCHA_SOLVER_JS", ""),
-    r"E:\AiWorkspace\Tools\zocdedemo\zcode2api\captcha_node\solver.js",
     str(os.path.join(os.path.dirname(__file__), "captcha_node", "solver.js")),
 )
 
-# 外部 solver 的依赖解析路径：把仓库自带的 happy-dom 借给它，
-# 免得在外部仓库里再装一份 node_modules。
+# 求解器依赖目录（happy-dom 等已安装到此）
 _SOLVER_NODE_PATH = str(
     os.path.join(os.path.dirname(__file__), "captcha_node", "node_modules")
 )

@@ -41,6 +41,22 @@ _DROP_HEADERS = {
 _DROP_HEADER_PREFIXES = ("x-zcode", "x-stainless")
 
 
+def should_fallback_to_apikey(status_code: int, text: str, needs_captcha: bool, mode: str) -> bool:
+    """JWT 通道遇到哪些错误码应该切换到 apiKey（绕开验证码）？"""
+    if mode != "jwt":
+        return False
+    # 3012/405 风控：直接禁用，不 fallback
+    if is_risk_control(status_code, text):
+        return False
+    # 额度耗尽 / 限流 → 切 apiKey（独立余额）
+    if status_code in (402, 429):
+        return True
+    # 验证码挑战也建议 fallback（绕过自动求解器）
+    if detect_captcha_challenge(status_code, {}, text):
+        return True
+    return False
+
+
 def build_request(
     account: dict,
     body: dict,

@@ -1,10 +1,13 @@
 {
-  "name": "zcode-captcha-node",
-  "private": true,
+  "name": "captcha-node",
   "version": "1.0.0",
-  "description": "Aliyun traceless captcha solver for zcode channel (happy-dom stubs)",
+  "description": "Aliyun captcha solver for ZCode (inlined from zcode2api AGPL)",
   "main": "solver.js",
   "dependencies": {
-    "happy-dom": "^20.11.6"
+    "happy-dom": "^17.1.2",
+    "jsdom": "^26.1.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

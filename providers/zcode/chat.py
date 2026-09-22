@@ -516,3 +516,118 @@ async def _stream(body: dict, api_key_info: dict | None, model_name: str) -> Asy
 
 
 _NEXT_ACCOUNT = object()
+
+
+async def test_chat(account: dict, model: str = "auto", prompt: str = "ping") -> dict:
+    """对**指定**账号发一次最小 chat 请求，回传真实上游结果。
+
+    与 chat_completions 的区别：
+    - 不参与账号轮换，只测传入的那个账号；
+    - **只读探测**：不写账号状态（不调 _mark / 不调 _ban_for_risk）——
+      避免「测试」把账号测成 invalid/disabled；
+    - 返回统一结构 {"ok", "status_code", "duration_ms", "message"}，
+      管理页据此展示真实原因，而不是笼统的「测试失败」。
+    """
+    payload = {
+        "model": model or "auto",
+        "messages": [{"role": "user", "content": prompt or "ping"}],
+        "stream": False,
+        "max_tokens": 64,
+    }
+    converted, err = openai_to_anthropic(payload)
+    if converted is None:
+        return {"ok": False, "status_code": 400, "duration_ms": 0,
+                "message": err or "请求体不合法"}
+
+    body = _normalize_body(converted)
+    model_name = str(model or "")
+
+    if not secret_for(account):
+        return {"ok": False, "status_code": 0, "duration_ms": 0,
+                "message": "账号缺少可用凭据（token/api_key 为空），请重新导入或走 OAuth 登录"}
+
+    t0 = time.time()
+    verify_param = verify_region = None
+    extra = account.get("extra") or {}
+    api_key = str(extra.get("api_key") or "")
+    needs_captcha = account_mode(account) == "jwt"
+    
+    # 第一次尝试：JWT + 验证码
+    if needs_captcha:
+        try:
+            verify_param, verify_region = await captcha_manager.get_verify_param()
+        except CaptchaSolveError as exc:
+            # 验证码失败但有 api_key → 降级
+            if api_key:
+                log.warning("test_chat: jwt captcha failed, fallback to apikey")
+                needs_captcha = False
+                # 关键：临时修改 extra.mode 让 build_request 走 apiKey 通道
+                account["extra"]["mode"] = "apikey"
+            else:
+                return {"ok": False, "status_code": 0,
+                        "duration_ms": int((time.time() - t0) * 1000),
+                        "message": f"无法完成人机验证且无 fallback key: {exc}"}
+
+    try:
+        url, headers, raw = agent.build_request(
+                account, body,
+                verify_param if needs_captcha else None,
+                None,
+                verify_region if needs_captcha else None
+            )
+    except RuntimeError as exc:
+        return {"ok": False, "status_code": 0,
+                "duration_ms": int((time.time() - t0) * 1000),
+                "message": str(exc)[:240]}
+
+    try:
+        status_code, client, cm, resp = await _stream_upstream(account, url, headers, raw)
+    except httpx.HTTPError as exc:
+        return {"ok": False, "status_code": 0,
+                "duration_ms": int((time.time() - t0) * 1000),
+                "message": f"连接上游失败：{exc}"}
+
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if status_code >= 400:
+        text = (await resp.aread()).decode("utf-8", "ignore")
+        await cm.__aexit__(None, None, None)
+        await client.aclose()
+        detail = _http_error_detail(status_code, text)
+        message = ""
+        if isinstance(detail, dict):
+            err_obj = detail.get("error")
+            if isinstance(err_obj, dict):
+                message = err_obj.get("message") or ""
+            message = message or detail.get("message") or ""
+        message = message or text[:240]
+        hint = ""
+        if status_code == 401:
+            hint = "凭据已失效，需重新导入账号"
+        elif status_code == 403:
+            hint = "无权限（可能被风控或套餐未生效）"
+        elif agent.is_risk_control(status_code, text):
+            hint = "命中上游风控"
+        elif agent.is_exhausted(status_code, text):
+            hint = "额度已用完"
+        elif status_code == 429:
+            hint = "被限流"
+        suffix = f"（{hint}）" if hint else ""
+        return {"ok": False, "status_code": status_code, "duration_ms": duration_ms,
+                "message": f"HTTP {status_code}{suffix}: {message}"}
+
+    consumed = await _consume_json_upstream(client, cm, resp, account, body, model_name)
+    duration_ms = int((time.time() - t0) * 1000)
+    if isinstance(consumed, tuple) and consumed and consumed[0] == "json":
+        data = consumed[1] or {}
+        choices = data.get("choices") or [{}]
+        content = ""
+        if choices:
+            content = (choices[0].get("message") or {}).get("content") or ""
+        return {"ok": True, "status_code": 200, "duration_ms": duration_ms,
+                "message": f"模型响应正常：{str(content)[:120] or '(空回复)'}"}
+
+    detail = consumed[1] if isinstance(consumed, tuple) and len(consumed) > 1 else (502, {})
+    code = detail[0] if isinstance(detail, tuple) else 502
+    return {"ok": False, "status_code": code, "duration_ms": duration_ms,
+            "message": "上游响应格式异常"}
