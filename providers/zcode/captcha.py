@@ -42,6 +42,9 @@ CONFIG_CACHE_TTL_MS = int(os.environ.get("ZCODE_CAPTCHA_CONFIG_CACHE_TTL", "6000
 NODE_PATH = os.environ.get("ZCODE_NODE_PATH", "node")
 SOLVE_RETRIES = int(os.environ.get("ZCODE_CAPTCHA_RETRIES", "4"))
 SOLVE_TIMEOUT = int(os.environ.get("ZCODE_CAPTCHA_TIMEOUT", "40"))
+# 求解失败后的补池冷却（秒）：避免对验证码/风控端点持续空转，降低 WAF 暴露面。
+# 求解器持续性失败（如风控拒绝无头环境）时，后台循环会退避到该窗口后才再试一次。
+REFILL_COOLDOWN_S = float(os.environ.get("ZCODE_CAPTCHA_REFILL_COOLDOWN", "30"))
 
 # 外部 solver 位置（按优先级回退）：
 #   1. 环境变量 ZCODE_CAPTCHA_SOLVER_JS 显式指定
@@ -123,6 +126,7 @@ class CaptchaManager:
         self._config_cache: dict | None = None
         self._config_cache_at: float = 0.0
         self._last_error: str | None = None
+        self._last_fail_at: float = 0.0
         self._solver_used: str | None = None
         self._degraded_solvers: set[str] = set()
 
@@ -165,6 +169,14 @@ class CaptchaManager:
                 pass
         self._refill_task = None
 
+    def _in_refill_cooldown(self) -> bool:
+        """求解失败后的冷却窗口：防止对验证码/风控端点持续空转。
+
+        求解器持续性失败（如风控拒绝无头环境、依赖缺失）时，后台补池循环
+        会退避到该窗口后才再试一次，而不是每 3s 硬刚——既省资源也降低 WAF 暴露面。
+        """
+        return bool(self._last_fail_at) and (time.time() - self._last_fail_at) < REFILL_COOLDOWN_S
+
     def _gate_open(self) -> bool:
         """仅当存在可服务的 JWT 账号才预热（apiKey 账号不需要验证码）。"""
         import database as db
@@ -184,6 +196,9 @@ class CaptchaManager:
                     continue
                 need = POOL_MIN - self._pool_size
                 if need > 0:
+                    if self._in_refill_cooldown():
+                        await asyncio.sleep(2)
+                        continue
                     await self._refill_batch(need)
                 else:
                     await self._evict_expired()
@@ -242,7 +257,12 @@ class CaptchaManager:
             if not token.expired():
                 asyncio.create_task(self._refill_batch(1))
                 return token.param, token.region
-        # 池空/全过期：同步现解一次（首启兜底）
+        # 池空/全过期：同步现解一次（首启兜底）。
+        # 刚失败过 → 快速报错，不让每次请求都空转打验证码/风控端点。
+        if self._in_refill_cooldown():
+            raise CaptchaSolveError(
+                f"验证码求解失败（冷却中，{REFILL_COOLDOWN_S:.0f}s）: {self._last_error or '多次重试无结果'}"
+            )
         config = await self.fetch_config()
         token = await self._solve_one(config)
         if token is None:
@@ -296,20 +316,26 @@ class CaptchaManager:
                     break
                 self._solver_used = path
                 self._degraded_solvers.discard(path)
+                self._last_fail_at = 0.0
                 return _Token(param, region)
         if all_degraded:
             errors.append("全部求解器只出降级结果（反检测能力不足）")
         self._last_error = " | ".join(errors[-4:])
+        self._last_fail_at = time.time()
         return None
 
     def diagnostics(self) -> dict:
         """求解器可用性与最近一次失败原因（供探针 / 管理页排障）。"""
+        remaining = 0.0
+        if self._in_refill_cooldown():
+            remaining = round(self._last_fail_at + REFILL_COOLDOWN_S - time.time(), 1)
         return {
             "solvers": _resolve_solvers(),
             "solver_used": self._solver_used,
             "degraded_solvers": sorted(self._degraded_solvers),
             "pool_size": self._pool_size,
             "last_error": self._last_error,
+            "refill_cooldown_remaining": remaining,
         }
 
     def invalidate(self) -> None:

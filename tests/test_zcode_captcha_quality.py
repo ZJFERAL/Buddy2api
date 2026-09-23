@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -125,10 +126,50 @@ async def step_invalid_param_not_pooled() -> None:
         cap._CANDIDATE_SOLVERS = orig
 
 
+async def step_refill_cooldown() -> None:
+    """求解持续失败 → 进入冷却，避免对验证码/风控端点持续空转。"""
+    tmp = tempfile.mkdtemp(prefix="zcode_captcha_cool_")
+    broken = _write_solver(os.path.join(tmp, "broken.js"), "", exit_code=4, delay_ms=0)
+    orig = cap._CANDIDATE_SOLVERS
+    cap._CANDIDATE_SOLVERS = (broken,)
+    try:
+        mgr = cap.CaptchaManager()
+        mgr.fetch_config = lambda: _fake_config()  # type: ignore[method-assign]
+        cfg = {"sceneId": "11xygtvd", "region": "cn", "prefix": "no8xfe"}
+        token = await mgr._solve_one(cfg)
+        check("求解器崩溃时 _solve_one 返回 None", token is None)
+        check("失败后进入冷却窗口", mgr._in_refill_cooldown())
+        diag = mgr.diagnostics()
+        check(
+            "diagnostics 暴露冷却剩余",
+            diag.get("refill_cooldown_remaining", 0) > 0,
+            str(diag.get("refill_cooldown_remaining")),
+        )
+        # 冷却内 get_verify_param 应快速失败，而不是再次空转求解
+        t0 = time.time()
+        try:
+            await mgr.get_verify_param()
+            raised = False
+        except cap.CaptchaSolveError:
+            raised = True
+        check(
+            "冷却内 get_verify_param 快速抛 CaptchaSolveError",
+            raised and (time.time() - t0) < 5,
+            f"elapsed={(time.time() - t0):.2f}s",
+        )
+        # 冷却过期后恢复求解
+        mgr._last_fail_at = 0.0
+        check("冷却过期后恢复", not mgr._in_refill_cooldown())
+    finally:
+        cap._CANDIDATE_SOLVERS = orig
+
+
 async def main() -> None:
     await step_quality_gate()
     await step_solver_fallback()
     await step_invalid_param_not_pooled()
+    await step_refill_cooldown()
+    await step_refill_cooldown()
     print("\n".join(OUT))
     fails = [line for line in OUT if line.startswith("FAIL")]
     print(f"\n== {len(OUT) - len(fails)}/{len(OUT)} passed ==")

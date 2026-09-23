@@ -231,6 +231,12 @@ System identity block injection (anti-3012), `cache_control`,
   time on known-bad solvers.
 - Pre-warm pool: `captcha_manager.start()` is called idempotently in
   `get_verify_param()` and `fetch_checkin()`.
+- Failure cooldown: when a solve attempt yields no valid token,
+  `_last_fail_at` is set and background refill / on-demand solve back off for
+  `ZCODE_CAPTCHA_REFILL_COOLDOWN` (default 30s) before retrying — avoids
+  hammering the Aliyun risk endpoints when the solver is persistently failing
+  (e.g. risk engine rejecting the headless env). Exposed as
+  `refill_cooldown_remaining` in diagnostics.
 
 ### OAuth flow
 
