@@ -164,6 +164,12 @@ def test_classify_failover_splits_account_vs_request():
     assert cf(400, "Cannot find model") == auth_manager.FAILOVER_MODEL
     assert cf(400, 'Unsupported model "qfmodel"') == auth_manager.FAILOVER_MODEL
     assert cf(403, "model access denied") == auth_manager.FAILOVER_MODEL
+    # 临时不可用类（超时/断流）：换号可解，但不下架账号
+    assert cf(400, "First Token Timeout or Upstream Timeout") == auth_manager.FAILOVER_TRANSIENT
+    assert cf(400, "stream failed") == auth_manager.FAILOVER_TRANSIENT
+    assert cf(400, "stream interrupted: read timeout") == auth_manager.FAILOVER_TRANSIENT
+    assert cf(400, "connection reset by peer") == auth_manager.FAILOVER_TRANSIENT
+    assert cf(400, "upstream unavailable") == auth_manager.FAILOVER_TRANSIENT
     # 请求本身的问题：换号没意义，绝不能连带消耗其它账号
     assert cf(400, "invalid request: messages must not be empty") is None
     assert cf(413, "request too large") is None
@@ -228,6 +234,41 @@ def test_model_error_blocks_only_that_model():
     # 成功一次即解除该模型的屏蔽
     auth_manager.mark_account_success(a["id"], provider=PROVIDER, model="qfmodel")
     assert auth_manager.account_model_blocked(a["id"], PROVIDER, "qfmodel") is False
+
+
+# ----------------------------- 3.5) 临时类 → 短冷却、不下架、到期自动恢复
+
+def test_transient_error_does_not_expire_account():
+    _fresh_db()
+    a = _add_account("A", "tok-a")
+    auth_manager.mark_account_failure(
+        a["id"], 400, "First Token Timeout or Upstream Timeout",
+        provider=PROVIDER, model="lite",
+    )
+    fresh = db.get_account(a["id"])
+    # 临时抖动：账号保持 active，绝不整体下架
+    assert fresh["status"] == "active", "临时超时不该把账号下架"
+    # 冷却期内被隔离
+    assert auth_manager.account_quota_blocked(fresh) is False
+    assert auth_manager.account_is_cooling_down(a["id"]) is True
+    nxt = auth_manager.pick_account(provider=PROVIDER, model="lite")
+    assert nxt is None, "冷却期内该账号不可选，且无其它账号可用"
+
+
+def test_transient_cooldown_expires_and_recovers():
+    """冷却 3 分钟一到，账号自动回到池子（无需人工干预）。"""
+    _fresh_db()
+    a = _add_account("A", "tok-a")
+    auth_manager.mark_account_failure(
+        a["id"], 400, "stream failed", provider=PROVIDER, model="lite"
+    )
+    assert auth_manager.account_is_cooling_down(a["id"]) is True
+    # 模拟 3 分钟冷却结束：直接把到期时间拨回过去
+    auth_manager._account_failures[a["id"]] = (1, time.monotonic() - 1)
+    assert auth_manager.account_is_cooling_down(a["id"]) is False
+    got = auth_manager.pick_account(provider=PROVIDER, model="lite")
+    assert got and got["id"] == a["id"], "冷却结束后账号应自动恢复可选"
+    assert db.get_account(a["id"])["status"] == "active"
 
 
 # -------------------------------- 4) 端到端：OpenAI 路由 402 → 换号成功

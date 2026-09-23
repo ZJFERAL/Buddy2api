@@ -15,7 +15,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -86,15 +86,16 @@ def request_timeout(default: int) -> int:
 # ============================================================
 # 上游错误归类 → 换号决策
 # ============================================================
-# 有些 4xx 并不是「这次请求有问题」，而是「这个账号有问题」：额度用光了，
-# 或者没有某个模型的权限。这类错误在 HTTP 码上往往就是 400/402，直接返回给
-# 客户端等于白白浪费掉池子里的其它账号。归好类之后 provider 层就能
-# 「标记本账号 + 换下一个重试」，而不是把错误原样抛出去。
-FAILOVER_QUOTA = "quota"    # 本账号额度耗尽（含 HTTP 402）
-FAILOVER_MODEL = "model"    # 本账号没有该模型的权限
+# 有些 4xx 并不是「这次请求有问题」，而是「这个账号有问题」：额度用光了、
+# 没有某个模型的权限、或者上游临时抖动。这类错误在 HTTP 码上往往就是
+# 400/402/503，直接返回给客户端等于白白浪费掉池子里的其它账号。归好类之后
+# provider 层就能「标记本账号 + 换下一个重试」，而不是把错误原样抛出去。
+FAILOVER_QUOTA = "quota"        # 本账号额度耗尽（含 HTTP 402）→ 下架到次日 0 点
+FAILOVER_TRANSIENT = "transient"  # 上游临时不可用（超时/断流）→ 短冷却，不下架
+FAILOVER_MODEL = "model"        # 本账号没有该模型的权限 → 只屏蔽该 (账号, 模型)
 
-MODEL_BLOCK_TTL = 1800       # 模型权限类问题的屏蔽时长（30 分钟）
-QUOTA_BLOCK_TTL = 6 * 3600   # 额度隔离时长；写进 extra，重启后依然有效
+MODEL_BLOCK_TTL = 1800           # 模型权限类问题的屏蔽时长（30 分钟）
+TRANSIENT_COOLDOWN = 180         # 超时/断流类：3 分钟短冷却，之后自动回到池子
 
 _QUOTA_MARKERS = (
     "billing daily count exceeded",
@@ -103,11 +104,15 @@ _QUOTA_MARKERS = (
     "out of credit", "no available credit", "credit exhausted", "credits exhausted",
     "usage limit reached", "exceeded the usage limit", "payment required",
     "余额不足", "额度不足", "额度已用完", "额度耗尽",
-    # 上游临时不可用（换号可解）
+)
+
+# 上游临时不可用：区别于额度，这类问题几分钟内可能自愈，冷处理后即可复用，
+# 绝不能把账号整体下架（否则一次超时就把好账号封了半天）。
+_TRANSIENT_MARKERS = (
     "first token timeout", "upstream timeout", "timeout",
     "upstream unavailable", "service unavailable", "temporarily unavailable",
     "503", "504", "gateway timeout",
-    # 连接/流式层面的失败（换号可解）
+    # 连接/流式层面的失败
     "stream failed", "stream interrupted", "connection reset",
     "connection refused", "connection aborted", "connection dropped",
     "read timeout", "read timed out", "write timeout", "operation timed out",
@@ -125,11 +130,21 @@ _MODEL_MARKERS = (
 _model_blocks: dict[tuple[str, int, str], float] = {}
 
 
-def classify_failover(status_code: int = 0, error_msg: str = "") -> Optional[str]:
-    """判断一个上游错误是否「换号可解」，返回 FAILOVER_QUOTA / FAILOVER_MODEL。
+def _next_midnight_epoch() -> int:
+    """下一个本地 0 点的时间戳（额度按天计量，天然以 0 点为恢复点）。"""
+    now = datetime.now()
+    tomorrow = now + timedelta(days=1)
+    return int(datetime.combine(tomorrow, datetime.min.time()).timestamp())
 
-    返回 None 表示这是请求本身的问题（参数错、内容被拒…），换号也没用，
-    应当直接把错误吐给客户端，免得连续消耗其它账号。
+
+def classify_failover(status_code: int = 0, error_msg: str = "") -> Optional[str]:
+    """判断一个上游错误是否「换号可解」，返回类别。
+
+    * FAILOVER_QUOTA —— 额度耗尽，当天不可能自愈，下架到次日 0 点。
+    * FAILOVER_TRANSIENT —— 上游临时不可用（超时/断流），短冷却后换号。
+    * FAILOVER_MODEL —— 该账号缺这个模型的权限，只屏蔽该组合。
+    * None —— 请求本身的问题（参数错、内容被拒…），换号也没用，
+      应当直接把错误吐给客户端，免得连续消耗其它账号。
     """
     text = (error_msg or "").lower()
     if status_code == 402:
@@ -138,6 +153,8 @@ def classify_failover(status_code: int = 0, error_msg: str = "") -> Optional[str
         return None
     if any(marker in text for marker in _QUOTA_MARKERS):
         return FAILOVER_QUOTA
+    if any(marker in text for marker in _TRANSIENT_MARKERS):
+        return FAILOVER_TRANSIENT
     if any(marker in text for marker in _MODEL_MARKERS):
         return FAILOVER_MODEL
     return None
@@ -206,7 +223,10 @@ def mark_account_failure(aid: int, status_code: int = 0, error_msg: str = "",
     """记录一次账号失败，按上游错误的性质决定隔离方式。
 
     * 额度类（FAILOVER_QUOTA）→ 本账号这个周期已经用光：`status=expired`
-      下架，并把隔离到期时间写进 `extra.quota_blocked_until`（跨重启有效）。
+      下架，并把隔离到期时间写进 `extra.quota_blocked_until`（次日 0 点，
+      跨重启有效）。
+    * 超时/断流类（FAILOVER_TRANSIENT）→ 上游临时抖动：只加 3 分钟冷却，
+      **不下架账号**。冷却一过自动回到池子，避免一次超时就把好账号封半天。
     * 模型权限类（FAILOVER_MODEL）→ 只屏蔽 (provider, 账号, 模型) 这个组合，
       账号本身仍然健康，其它模型照常使用。
     * 其它 → 保持原逻辑：指数退避冷却；401/403 直接下架。
@@ -216,11 +236,16 @@ def mark_account_failure(aid: int, status_code: int = 0, error_msg: str = "",
         account = db.get_account(aid) or {}
         extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
         patched = dict(extra)
-        patched["quota_blocked_until"] = int(time.time() + QUOTA_BLOCK_TTL)
+        patched["quota_blocked_until"] = _next_midnight_epoch()
         patched["quota_blocked_reason"] = (error_msg or "")[:200]
         with _failure_lock:
             _account_failures.pop(aid, None)
         db.update_account(aid, {"status": "expired", "extra": patched})
+        return
+    if kind == FAILOVER_TRANSIENT:
+        # 临时问题：只加短冷却，不下架。到期后账号自动恢复可用。
+        with _failure_lock:
+            _account_failures[aid] = (1, time.monotonic() + TRANSIENT_COOLDOWN)
         return
     if kind == FAILOVER_MODEL:
         with _failure_lock:
