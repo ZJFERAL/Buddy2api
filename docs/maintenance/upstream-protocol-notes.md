@@ -224,9 +224,11 @@ System identity block injection (anti-3012), `cache_control`,
   `certifyId/sceneId/isSign`) are rejected by upstream with code 3007.
 - Solver candidates (priority order):
   1. `ZCODE_CAPTCHA_SOLVER_JS` env var
-  2. `providers/zcode/captcha_node/solver.js` (built-in, basic — may only
-     produce failover params)
-  3. External verified solver (if available)
+  2. `providers/zcode/captcha_node/solver.js` (built-in: heavy-duty happy-dom
+     solver ported from Zcode2Api3, AS_IS license — constant Chrome/127 Linux
+     fingerprint, CDN disk+memory cache, pe VM patch, per-request header
+     injection, cookie priming, ~40 polyfills, mouse-glide emulation, stall
+     detection. Passes Aliyun risk as T001.)
 - `_ordered_solvers()` learns from past success/failure, avoids wasting
   time on known-bad solvers.
 - Pre-warm pool: `captcha_manager.start()` is called idempotently in
@@ -291,7 +293,10 @@ curl http://127.0.0.1:8787/admin/providers/zcode/diagnostics
 
 Protocol translated from MIT-licensed `zcode-api` (TypeScript). Do NOT copy
 AGPL-licensed `zcode2api` source code into this repo. The `solver.js` is
-self-authored based on the zcode-api mechanism.
+self-authored based on the zcode-api mechanism. The happy-dom solver was
+ported as a design port from `Zcode2Api3` (AS_IS license, see
+`providers/zcode/captcha_node/solver.js` header) — not copied from the
+AGPL `zcode2api`/`zcode2api-plus` variants.
 
 ---
 

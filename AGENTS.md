@@ -210,8 +210,15 @@ python scripts/buddy_restart.py --foreground  # use with run_in_background=true
 
 ### zcode
 - **Captcha dependency**: JWT channel requires Alibaba Cloud captcha solving
-  (Node.js + `providers/zcode/captcha_node/solver.js`). Quality gate:
+  (Node.js + `providers/zcode/captcha_node/solver.js`, a heavy-duty happy-dom
+  solver ported from Zcode2Api3, AS_IS license). Dependencies:
+  `happy-dom@^20.14.0` + `undici@^8.10.2` (install via
+  `providers/zcode/captcha_node/install_deps.sh`). Quality gate:
   `is_valid_verify_param()` checks `base64(JSON)` + `securityToken ≥ 50`.
+  **jsdom solver is rejected** — Aliyun risk engine returns F001
+  (`VerifyResult:false`) for its headless fingerprint; the happy-dom build
+  passes (T001). First mint warms a CDN disk cache + zcode cookies; occasional
+  exit-2 stalls are normal and recovered by the existing retry loop.
 - **Diagnostics**: `GET /admin/providers/zcode/diagnostics`
 - **Probe**: `python scripts/zcode_claim_probe.py`
 - **License**: Protocol translated from MIT-licensed `zcode-api` (TypeScript).
