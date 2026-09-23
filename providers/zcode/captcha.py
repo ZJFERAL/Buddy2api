@@ -8,11 +8,15 @@
 - token 时效 ~2 分钟，池内按 FIFO + 年龄淘汰；
 - 上游返回挑战时 invalidate() 清空整池（该批 token 可能已被风控盯上）。
 
-求解器实现内化：
-- 源自 zcode2api (AGPL) 的已验证实现，现已完整迁移到此目录；
-- 依赖 happy-dom@^17.1.2 已安装到 captcha_node/node_modules；
-- 实测 ~3s 出含 securityToken 的完整 param；
-- ⚠ 不再依赖外部仓库路径，避免跨项目依赖和路径失效问题。
+求解器实现内化（来自 Zcode2Api3，AS_IS 许可的 design port，非 AGPL 代码复制）：
+- 重度加固的 happy-dom 求解器（solver.js）：常量指纹（Chrome/127 Linux +
+  SwiftShader WebGL + 1px canvas）、CDN 磁盘+内存双缓存、pe 字节码 VM patch、
+  网络拦截器注入 UA/origin/referer、cookie 预置、~40 个浏览器 polyfill +
+  native-toString 伪装 + 鼠标轨迹模拟、stall 检测；
+- jsdom 求解器已弃用：其无头指纹被阿里云风控判 F001（VerifyResult=false），
+  无法 mint 有效 param（2026-09-23 实测）；happy-dom 加固版可过（T001）。
+- 依赖 happy-dom@^20.14.0 + undici@^8.10.2 已安装到 captcha_node/node_modules；
+- 实测首次 mint ~3s 出含 securityToken 的完整 param（~280 字符）。
 
 ⚠ 求解结果必须过 is_valid_verify_param 质量校验：
 真 param 是 base64(JSON) 且含 securityToken（≥50 字符，整体 ~300+ 字符）。
@@ -48,16 +52,16 @@ REFILL_COOLDOWN_S = float(os.environ.get("ZCODE_CAPTCHA_REFILL_COOLDOWN", "30"))
 
 # 外部 solver 位置（按优先级回退）：
 #   1. 环境变量 ZCODE_CAPTCHA_SOLVER_JS 显式指定
-#   2. 内部求解器（已将 zcode2api 的实现完整内化到此目录）
+#   2. 内部求解器（重度加固 happy-dom，Zcode2Api3 AS_IS design port）
 #      - 实测 ~3s 出含 securityToken 的完整 param
-#      - 依赖 happy-dom@^17.1.2 已安装到 captcha_node/node_modules
+#      - 依赖 happy-dom@^20.14.0 + undici@^8.10.2 已安装到 captcha_node/node_modules
 #   注：不再依赖外部仓库路径，避免跨项目依赖问题
 _CANDIDATE_SOLVERS = (
     os.environ.get("ZCODE_CAPTCHA_SOLVER_JS", ""),
     str(os.path.join(os.path.dirname(__file__), "captcha_node", "solver.js")),
 )
 
-# 求解器依赖目录（happy-dom 等已安装到此）
+# 求解器依赖目录（happy-dom / undici 等已安装到此）
 _SOLVER_NODE_PATH = str(
     os.path.join(os.path.dirname(__file__), "captcha_node", "node_modules")
 )
@@ -362,7 +366,7 @@ async def _run_solver(solver_path: str, scene: str, region: str, prefix: str) ->
         raise RuntimeError(f"无法定位 Node 可执行文件（{NODE_PATH}）")
     env = dict(os.environ)
     if _SOLVER_NODE_PATH and os.path.isdir(_SOLVER_NODE_PATH):
-        # 让外部（AGPL）求解器复用仓库自带的 happy-dom
+        # 让求解器复用仓库自带的 happy-dom / undici
         env["NODE_PATH"] = os.pathsep.join(
             [p for p in (_SOLVER_NODE_PATH, env.get("NODE_PATH", "")) if p]
         )
