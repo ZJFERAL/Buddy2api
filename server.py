@@ -21,11 +21,6 @@ import secrets
 import socket
 import sys
 
-# Windows: force SelectorEventLoop. The default ProactorEventLoop uses AcceptEx/IOCP and
-# crashes with WinError 64 ("指定的网络名不再可用") on the pre-bound listening socket, so the
-# server binds successfully but then stops accepting connections. SelectorEventLoop avoids it.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import tempfile
 import time
 import threading
@@ -35,6 +30,19 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
+
+# Windows: uvicorn's default loop factory returns ProactorEventLoop on win32, which uses
+# AcceptEx/IOCP and crashes with WinError 64 ("指定的网络名不再可用") on the pre-bound listening
+# socket — the server binds but then stops accepting connections. uvicorn passes an explicit
+# loop_factory to asyncio.run, which BYPASSES asyncio.set_event_loop_policy, so the only reliable
+# fix is to patch uvicorn's loop factory to always return SelectorEventLoop on Windows.
+if sys.platform == "win32":
+    from uvicorn.loops import asyncio as _uvicorn_loops
+
+    def _windows_selector_loop_factory(use_subprocess: bool = False):
+        return asyncio.SelectorEventLoop
+
+    _uvicorn_loops.asyncio_loop_factory = _windows_selector_loop_factory
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from starlette.concurrency import run_in_threadpool
@@ -1454,9 +1462,27 @@ def _instance_id():
 
 
 def _lock_database():
+    # NOTE: by the time this runs, main() has already bound & is listening on the port, so a
+    # successful call here already implies no other instance is running. The lock file only guards
+    # edge cases. If an external process holds it read-only (antivirus / cloud-sync real-time scan
+    # of the *.db*.tmp pattern, or a defunct instance whose handle was never released), we must NOT
+    # fail the launch — fall back to running without the file lock instead of crashing on startup.
     path = Path(str(db.DB_PATH.resolve()) + ".instance.lock.tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(path, "a+b")
+    handle = None
+    for _attempt in range(3):
+        try:
+            handle = open(path, "a+b")
+            break
+        except PermissionError as exc:
+            if _attempt < 2:
+                time.sleep(0.3)
+                continue
+            sys.stderr.write(
+                f"[warn] 无法获取实例锁文件（被外部进程只读占用：{exc}），将以无锁模式启动。"
+                f" 若确有其它 Buddy2api 实例在运行，请先停止它。\n"
+            )
+            return None
     try:
         if os.name == "nt":
             import msvcrt
@@ -1594,7 +1620,8 @@ def main():
             server.run(sockets=[listener])
     finally:
         listener.close()
-        instance_lock.close()
+        if instance_lock is not None:
+            instance_lock.close()
 
 
 if __name__ == "__main__":
