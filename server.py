@@ -20,6 +20,12 @@ import os
 import secrets
 import socket
 import sys
+
+# Windows: force SelectorEventLoop. The default ProactorEventLoop uses AcceptEx/IOCP and
+# crashes with WinError 64 ("指定的网络名不再可用") on the pre-bound listening socket, so the
+# server binds successfully but then stops accepting connections. SelectorEventLoop avoids it.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import tempfile
 import time
 import threading
