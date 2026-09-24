@@ -9,7 +9,8 @@ import providers
 import router
 from providers.protocol import UnknownChannel, UnknownModel
 from providers.qwenwork import cosy
-from providers.qwenwork.chat import build_body, envelope_error, unwrap_sse_payload
+from providers.qwenwork.chat import build_body, envelope_error, static_headers, translate_model, unwrap_sse_payload
+from providers.qwenwork.encode import prepare_infer
 from providers.qwenwork.constants import COSY_VERSION, COSY_VERSION_FROZEN, RSA_PUBLIC_KEY_PEM, STATIC_MODELS
 from providers.qwenwork.store import parse_credentials, qwenwork_auth_dirs
 
@@ -41,7 +42,7 @@ def test_qwenwork_in_default_registry(monkeypatch):
 
 def test_cosy_version_is_frozen():
     assert COSY_VERSION_FROZEN is True
-    assert COSY_VERSION == "1.1.18"
+    assert COSY_VERSION == "1.1.32"
     assert RSA_PUBLIC_KEY_PEM.startswith("-----BEGIN PUBLIC KEY-----")
 
 
@@ -137,7 +138,6 @@ def test_qwenwork_sources_do_not_touch_workbuddy_stack():
         assert "import fingerprint" not in text
         assert "from fingerprint" not in text
         assert "X-IDE-Type" not in text
-        assert "Encode=1" not in text
 
 
 def test_qwenwork_auth_dirs_ignore_workbuddy_cb_auth_dir(monkeypatch, tmp_path):
@@ -172,6 +172,20 @@ def test_static_models_include_live_and_legacy_ids():
     assert "flash" in STATIC_MODELS
     assert "qwen3.8-max-preview" in STATIC_MODELS
     assert "qwork-advanced" in STATIC_MODELS
+    assert "qwork-auto" in STATIC_MODELS
+    assert "qwork-ultimate" in STATIC_MODELS
+
+
+def test_translate_model_sends_official_tier_keys():
+    assert translate_model("qwork-advanced") == "qwork-advanced"
+    assert translate_model("auto") == "qwork-advanced"
+    assert translate_model("pro") == "qwork-advanced"
+    assert translate_model("advanced") == "qwork-advanced"
+    assert translate_model("qwork-auto") == "qwork-auto"
+    assert translate_model("flash") == "qwork-auto"
+    assert translate_model("qwork-ultimate") == "qwork-ultimate"
+    assert translate_model("ultimate") == "qwork-ultimate"
+    assert translate_model("qwork-lite") == "qwork-lite"
 
 
 def test_parse_qwenwork_supplier_models():
@@ -210,3 +224,60 @@ def test_qwenwork_build_body_applies_reasoning_switch(controls, expected):
 
     assert body["chat_context"]["extra"]["modelConfig"]["is_reasoning"] is expected
     assert body["model_config"]["is_reasoning"] is expected
+    assert body["model_config"]["key"] == "qwork-advanced"
+    assert body["business"] == {
+        "product": "qoder_work",
+        "type": "agent",
+        "version": "1",
+        "feature_switches": {},
+    }
+    assert body["chat_context"]["extra"]["modelConfig"]["key"] == "qwork-advanced"
+
+
+def test_build_body_maps_legacy_ids_to_official_keys():
+    body, _, model = build_body({
+        "model": "pro",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+    assert model == "qwork-advanced"
+    assert body["model_config"]["key"] == "qwork-advanced"
+    headers = static_headers(model, "req-1", "dev-machine")
+    assert headers["x-model-key"] == "qwork-advanced"
+    assert headers["X-Model-Key"] == "qwork-advanced"
+    assert headers["x-internal-model-key"] == "qwork-advanced"
+    assert headers["Cosy-Version"] == "1.1.32"
+    assert headers["X-QwenWork-Version"] == "1.0.4"
+    assert headers["Cosy-MachineType"] == "5"
+    assert headers["Cosy-MachineToken"] == "dev-machine"
+
+    body, _, model = build_body({
+        "model": "flash",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+    assert model == "qwork-auto"
+    assert body["model_config"]["key"] == "qwork-auto"
+
+
+def test_prepare_infer_emits_encode_body():
+    body, raw, model = build_body({
+        "model": "pro",
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 32,
+    })
+    prepared = prepare_infer(
+        body=raw,
+        model_key=model,
+        machine_id="dev-machine",
+        uid="u1",
+        name="n",
+        email="e@x",
+        access_token="tok",
+    )
+    assert "Encode=1" in prepared.url
+    assert prepared.url.endswith("Encode=1") or "&Encode=1" in prepared.url
+    assert prepared.body
+    assert not prepared.body.lstrip().startswith("{")
+    assert prepared.headers.get("X-Model-Key") == model
+    assert prepared.headers.get("Cosy-Version") == "1.1.32"
+    assert "Authorization" in prepared.headers
+    assert "Cosy-Key" in prepared.headers
