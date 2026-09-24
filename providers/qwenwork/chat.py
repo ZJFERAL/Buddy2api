@@ -22,10 +22,12 @@ from providers.qwenwork.constants import (
     CHAT_QUERY,
     CLIENT_TYPE,
     COSY_VERSION,
+    DATA_POLICY,
     GATEWAY,
     IDE_VERSION,
     LOGIN_VERSION,
     MACHINE_OS,
+    MACHINE_TYPE,
     RELEASE_VERSION,
     RETRYABLE_STATUS,
     SCENE,
@@ -43,6 +45,26 @@ def translate_model(model: str) -> str:
 
 def chat_url() -> str:
     return f"{GATEWAY}{CHAT_PATH}?{CHAT_QUERY}"
+
+
+def _packed_request(account: dict, raw: str, model: str) -> tuple[str, dict[str, str], str]:
+    from providers.qwenwork.encode import prepare_infer
+
+    uid, name, email, token = _ids(account)
+    extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
+    machine_id = str(extra.get("login_device_id") or "")
+    prepared = prepare_infer(
+        body=raw,
+        model_key=model,
+        machine_id=machine_id,
+        uid=uid,
+        name=name,
+        email=email,
+        access_token=token,
+    )
+    headers = static_headers(model, str(uuid.uuid4()), machine_id)
+    headers.update(prepared.headers)
+    return prepared.url, headers, prepared.body
 
 
 def _ids(account: dict) -> tuple[str, str, str, str]:
@@ -159,17 +181,27 @@ def build_body(payload: dict) -> tuple[dict, str, str]:
             "display_name": model,
             "model": "",
             "format": "openai",
-            "is_vl": model in {"pro", "qwork-advanced"},
+            "is_vl": model in {
+                "qwork-auto", "qwork-advanced", "qwork-ultimate",
+                "pro", "flash", "qwen3.8-max-preview",
+            },
             "is_reasoning": is_reasoning,
             "api_key": "",
             "url": "",
             "source": "system",
-            "max_input_tokens": 180000,
+            "max_input_tokens": 1000000,
         },
         "system": system,
         "messages": messages,
         "tools": payload.get("tools") or [],
         "parameters": parameters,
+        # Catalog lookup reads these fields. Cosy-Business-* headers do not replace them.
+        "business": {
+            "product": BUSINESS_PRODUCT,
+            "type": BUSINESS_TYPE,
+            "version": "1",
+            "feature_switches": {},
+        },
     }
     raw = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
     return body, raw, model
@@ -193,8 +225,13 @@ def static_headers(model: str, request_id: str, machine_id: str = "") -> dict[st
         "Cosy-Business-Type": BUSINESS_TYPE,
         "Cosy-Scene": SCENE,
         "Cosy-MachineOS": MACHINE_OS,
+        "Cosy-MachineType": MACHINE_TYPE,
+        "Cosy-Data-Policy": DATA_POLICY,
         "Login-Version": LOGIN_VERSION,
+        "X-Model-Key": model,
+        "X-Model-Source": "system",
         "x-model-key": model,
+        "x-internal-model-key": model,
         "x-model-source": "system",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
@@ -202,6 +239,7 @@ def static_headers(model: str, request_id: str, machine_id: str = "") -> dict[st
     }
     if machine_id:
         headers["Cosy-MachineId"] = machine_id
+        headers["Cosy-MachineToken"] = machine_id
     return headers
 
 
@@ -353,11 +391,10 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
         log_model = api_key_info.get("_log_model")
     body, raw, upstream_model = build_body(payload)
     model_name = log_model if log_model is not None else payload.get("model", upstream_model)
-    url = chat_url()
     request_id = str(body.get("request_id") or uuid.uuid4())
 
     if client_wants_stream:
-        return ("stream", _stream(raw, url, request_id, upstream_model, api_key_info, model_name))
+        return ("stream", _stream(raw, request_id, upstream_model, api_key_info, model_name))
 
     tried: set[int] = set()
     last_error = None
@@ -368,10 +405,10 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
         tried.add(account["id"])
         t0 = time.time()
         try:
-            headers = _headers_for(account, url, raw, upstream_model, request_id)
+            url, headers, packed = _packed_request(account, raw, upstream_model)
             chunks: list[dict] = []
             async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream("POST", url, headers=headers, content=raw) as response:
+                async with client.stream("POST", url, headers=headers, content=packed) as response:
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
                         auth_manager.mark_account_failure(account["id"], response.status_code)
@@ -437,7 +474,7 @@ async def chat_completions(payload: dict, api_key_info: dict | None) -> tuple:
     )
 
 
-async def _stream(raw: str, url: str, request_id: str, upstream_model: str, api_key_info, model_name: str) -> AsyncGenerator[bytes, None]:
+async def _stream(raw: str, request_id: str, upstream_model: str, api_key_info, model_name: str) -> AsyncGenerator[bytes, None]:
     tried: set[int] = set()
     last_error = b'data: {"error":{"message":"No available accounts"}}\n\n'
     last_status = 503
@@ -449,9 +486,9 @@ async def _stream(raw: str, url: str, request_id: str, upstream_model: str, api_
         t0 = time.time()
         output_started = False
         try:
-            headers = _headers_for(account, url, raw, upstream_model, request_id)
+            url, headers, packed = _packed_request(account, raw, upstream_model)
             async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("POST", url, headers=headers, content=raw) as response:
+                async with client.stream("POST", url, headers=headers, content=packed) as response:
                     last_status = response.status_code
                     if response.status_code >= 400:
                         text = (await response.aread()).decode("utf-8", errors="replace")[:400]
@@ -503,12 +540,11 @@ async def test_chat(account: dict, model: str = "qwork-advanced", prompt: str = 
     }
     t0 = time.time()
     body, raw, upstream_model = build_body(payload)
-    url = chat_url()
     try:
-        headers = _headers_for(account, url, raw, upstream_model, str(body["request_id"]))
+        url, headers, packed = _packed_request(account, raw, upstream_model)
         chunks: list[dict] = []
         async with httpx.AsyncClient(timeout=45.0) as client:
-            async with client.stream("POST", url, headers=headers, content=raw) as response:
+            async with client.stream("POST", url, headers=headers, content=packed) as response:
                 status = response.status_code
                 if status >= 400:
                     text = (await response.aread()).decode("utf-8", errors="replace")[:400]
