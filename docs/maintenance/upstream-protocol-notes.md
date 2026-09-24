@@ -46,37 +46,43 @@ Tokens stored as `.info` files in `CB_AUTH_DIR` directory.
 
 ## 3. qwenwork
 
-**Auth model**: Originally COSY signature (RSA + AES + MD5 →
-`Bearer COSY.{payload}.{sig}`). Client v1.1.0 changed to plain OAuth Bearer.
+**Auth model**: COSY signature (RSA + AES + MD5 →
+`Bearer COSY.{payload}.{sig}`) on the legacy gateway, unchanged.
 
-**Protocol change (v1.1.0, ~2026-09-21)**:
+**Status (2026-09-24, v2.1.15)**: the legacy HTTP+SSE chat path is **live**.
+The 2026-09-21 `503 Model catalog unavailable` outage was a body-field bug, not
+a dead transport: the 1.0.4 gateway resolves the model catalog from
+`business.product` / `business.type` in the request body. Sending only the
+`Cosy-Business-*` headers left login, quota and model list working while chat
+still 503'd. v2.1.15 made the body and the headers share one source
+(`qoder_work` / `agent`), and moved chat infer to the official `Encode=1`
+WASM packing (`providers/qwenwork/encode.py`, needs `wasmtime`).
 
-| Aspect | v1.0.x (old) | v1.1.0 (current) |
-|---|---|---|
-| Auth | COSY signature | `Authorization: Bearer <accessToken>` |
-| Chat endpoint | `/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=..&AgentId=..` | Dynamic discovery via `/algo/api/v3/service/region/endpoints` → `inferNodes` |
-| Response | Plain SSE | Encrypted (needs `qoder-auth-wasm::decryptServerResponse`) |
-| Catalog | `/api/v2/model/list` (COSY) — still works | Same |
+| Aspect | Value |
+|---|---|
+| Auth | `Authorization: Bearer COSY.{payload}.{sig}` |
+| Chat endpoint | `/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=..&AgentId=..` on `GATEWAY`, plus `&Encode=1` after WASM packing |
+| Request body | WASM-encoded by `prepareInferRequest` (not plain JSON) |
+| Response | Plain SSE |
+| Catalog | `/api/v2/model/list` (COSY) |
 
-**Current status**:
-- Catalog list (`/api/v2/model/list` with COSY) returns 200, shows
-  `flash`, `pro`, `qwen3.8-max-preview` as enabled.
-- Chat on old endpoint returns HTTP 200 but SSE envelope contains
-  `statusCode: 503` with `"Model catalog unavailable"`.
-- Only `flash` model reliably works for the tested account.
-- Other models (`qwork-advanced`, `qwork-auto`, `qwork-lite`,
-  `qmodel_latest`, `auto`) return 400 `"Model is not available for this user"`.
+`OPENAPI_BASE` / `REALM_GATEWAY` / `MODEL_SERVER_PATH` are CN hosts recorded
+from the client's endpoint cache for a future protocol iteration. They are
+diagnostic-only (used by `scripts/qwenwork_probe.py`); the live chat path stays
+on `GATEWAY`, and the `gateway.qwenwork.cn` token is scoped to that realm.
 
 **Error pattern**: HTTP 200 with embedded error in SSE envelope
 (`statusCodeValue` or `body.code`). The `envelope_status()` function in
-`providers/qwenwork/chat.py` extracts the real status code.
+`providers/qwenwork/chat.py` extracts the real status code, so retryable
+upstream states (e.g. 503) keep their `RETRYABLE_STATUS` handling instead of
+being flattened to 400.
 
-**Identity constants** (current):
-- `IDE_VERSION = 1.1.0`
-- `RELEASE_VERSION = 1.1.0-26091701`
-- `USER_AGENT = qoderwork/1.1.0`
-- `OPENAPI_BASE = https://openapi.qoder.com.cn`
-- `REALM_GATEWAY = https://gateway.qoder.com.cn`
+**Identity constants** (current, frozen):
+- `IDE_VERSION = 1.0.4`
+- `RELEASE_VERSION = 1.0.4-26090412`
+- `COSY_VERSION = 1.1.32` (qoderclicn 1.0.4 `mm`)
+- `USER_AGENT = qoderwork/1.0.4`
+- `MACHINE_TYPE = 5`, `DATA_POLICY = disagree`
 
 **Probe**: `python scripts/qwenwork_probe.py` (read-only, 4 layers: catalog,
   credential domain, old chat transport, new protocol surface).

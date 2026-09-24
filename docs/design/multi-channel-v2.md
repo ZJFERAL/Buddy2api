@@ -609,11 +609,11 @@ PR0 新增头白名单测试（**新测试**，不复用 `test_valid_headers_is_
 | Windows | Local State DPAPI entropy=NULL → AES-256-GCM | 独立于 Fernet 账号密钥 |
 | Refresh | `POST .../api/v1/deviceToken/refresh` `{refresh_token,target:"c"}` | 轮换；成功才写回 |
 | 写回 | 对称加密、原子 replace、首次 `auth-v2.dat.buddy2api.bak`、保留未知 JSON 字段 | 解密失败 **禁止**写回 |
-| Chat URL | `/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common` | **明文 body** |
-| Encode | 0.1.3 逆向 URL **带 `Encode=1`**；后来插件规格改为明文 | Wave 1 **按明文、不带 Encode=1** 去冒烟。0.1.8 抓包若仍要 Encode=1，更新本文后再写代码。**禁止**实现者自行「修回」Encode=1 |
+| Chat URL | `/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common` | Wave 1 明文 body；**v2.1.15 起改走 WASM `Encode=1` 组包** |
+| Encode | 0.1.3 逆向 URL **带 `Encode=1`**；后来插件规格改为明文 | Wave 1 按明文、不带 Encode=1 冒烟。**2026-09-24 结论（v2.1.15）：1.0.4 网关需要 `Encode=1`**，chat body 由官方 `prepareInferRequest`（`providers/qwenwork/encode.py`）编码后原样发送。同时 body 必须自带 `business.product`/`business.type`，只带 `Cosy-Business-*` 头会 503 |
 | COSY AES | **16 个 ASCII hex 字符**（`uuid.uuid4().hex[:16]`，`[0-9a-f]{16}`），`key = iv = utf-8 字节`。不是 `os.urandom(16)` | RSA PKCS1 v1.5 包该 16 字符；OAEP → 403 |
 | Auth 头 | `Bearer COSY.<b64(header JSON)>.<md5>`；签名 path 去 `/algo` 前缀与 query | PEM 从 **0.1.8** 官方 asar/二进制提取，不粘贴参考模量 |
-| 静态头 | 0.1.8 冻结：`Cosy-Version=1.1.18`，clienttype 6，`User-Agent: qoderwork/0.1.8`，`Cosy-Scene=qwork` | 未冻结不得出站 |
+| 静态头 | **v2.1.15 重冻结**：`Cosy-Version=1.1.32`，clienttype 6，`User-Agent: qoderwork/1.0.4`，`Cosy-Scene=qwork`，`Cosy-MachineType=5`，`Cosy-Data-Policy=disagree`（0.1.8 的 `1.1.18` / `qoderwork/0.1.8` 已作废） | 未冻结不得出站 |
 | 模型 | `qwork-advanced` / `qwork-auto` / `qwork-lite` / `qmodel_latest` | 禁止 `x-model-key: glm-5.2` |
 | SSE | 外层 envelope + 内层 OpenAI chunk | 剥外层；单一 `[DONE]` |
 | 签到 | 无 | `checkin_supported=False` |
@@ -1126,6 +1126,12 @@ PR8  2.0.0 发布
 6. `Authorization: Bearer COSY.{o}.{md5_hex}`。
 7. RSA PEM：从本机 **0.1.8** 安装树提取（Windows 安装目录 / asar）。提取步骤写入 PR5 描述，PEM 进本仓库常量。
 8. 静态头与是否 Encode：0.1.8-26081406 已冻结。`COSY_VERSION_FROZEN=True`，`Cosy-Version=1.1.18`（qoderclicn `l0A`），`Cosy-ClientType=6`，`Cosy-Business-Product=qoder_work`，`Cosy-Scene=qwork`，明文 chat **不带** `Encode=1`。RSA PEM 来自官方 asar `generateAuthToken`（1024-bit PKCS1 v1.5）。未冻结则 adapter 拒绝出站。
+
+> **v2.1.15 更新（2026-09-24）**：以上身份常量已随 1.0.4 客户端重冻结 ——
+> `IDE_VERSION=1.0.4`、`RELEASE_VERSION=1.0.4-26090412`、`COSY_VERSION=1.1.32`
+> （qoderclicn 1.0.4 `mm`）、`User-Agent: qoderwork/1.0.4`，新增 `MACHINE_TYPE=5`
+> 与 `DATA_POLICY=disagree`。chat **改为** 官方 `Encode=1` WASM 组包。
+> `COSY_VERSION_FROZEN=True` 与「未冻结不得出站」的约束不变。
 
 ---
 

@@ -233,10 +233,17 @@ python scripts/buddy_restart.py --foreground  # use with run_in_background=true
 - **Campaign watch**: `python scripts/qoder_campaign_watch.py`
 
 ### qwenwork
-- **Protocol changed in v1.1.0**: Old COSY chat endpoint deprecated.
-  New version uses `@qwen-work/gateway-sdk` long connection + JWT.
-  Current HTTP+SSE path may return 503 "Model catalog unavailable".
-- **Only `flash` model reliably works** for the tested account.
+- **Chat infer uses official WASM `Encode=1` packing** (v2.1.15,
+  `providers/qwenwork/encode.py`). The URL gains `&Encode=1` and the JSON body
+  is replaced by the WASM-encoded payload — send it as-is, do not re-serialize.
+  Requires `wasmtime` (`requirements.txt`).
+- **Body must carry `business.product` / `business.type`**: the 1.0.4 gateway
+  resolves the model catalog from the body, not from the `Cosy-Business-*`
+  headers. Headers alone leave login/quota/model-list working while chat 503s
+  `Model catalog unavailable` (the 2026-09-21 outage; fixed in v2.1.15).
+- **The legacy HTTP+SSE path is live**; do not treat it as deprecated.
+  `envelope_status()` reads the real verdict from the SSE envelope, so
+  retryable upstream states keep their `RETRYABLE_STATUS` handling.
 - **Probe**: `python scripts/qwenwork_probe.py`
 
 ### monkeycode (planned)
